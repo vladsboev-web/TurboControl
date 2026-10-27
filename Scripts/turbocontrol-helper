@@ -1,0 +1,83 @@
+#!/bin/bash
+# TurboControl Privileged Helper for Intel Turbo Boost and Fan Management
+
+KEXT_PATH="/Library/Extensions/DisableTurboBoost.kext"
+FALLBACK_KEXT="/Applications/TurboControl.app/Contents/Resources/DisableTurboBoost.kext"
+BUNDLE_ID="com.rugarciap.DisableTurboBoost"
+
+FAN_BINARY="/usr/local/bin/turbocontrol-fan"
+FALLBACK_FAN="/Applications/TurboControl.app/Contents/Resources/turbocontrol-fan"
+
+case "$1" in
+    status)
+        if /usr/bin/kmutil showloaded 2>/dev/null | grep -q "$BUNDLE_ID" || /usr/sbin/kextstat 2>/dev/null | grep -q "$BUNDLE_ID"; then
+            echo "DISABLED"
+            exit 0
+        else
+            echo "ENABLED"
+            exit 0
+        fi
+        ;;
+    disable)
+        if [ ! -d "$KEXT_PATH" ]; then
+            if [ -d "$FALLBACK_KEXT" ]; then
+                cp -R "$FALLBACK_KEXT" "$KEXT_PATH" 2>/dev/null
+            fi
+        fi
+        if [ -d "$KEXT_PATH" ]; then
+            chown -R root:wheel "$KEXT_PATH" 2>/dev/null
+            chmod -R 755 "$KEXT_PATH" 2>/dev/null
+            /sbin/kextload "$KEXT_PATH" 2>/dev/null || /usr/bin/kmutil load -p "$KEXT_PATH" 2>/dev/null || /usr/bin/kextutil "$KEXT_PATH" 2>/dev/null
+        fi
+        if /usr/bin/kmutil showloaded 2>/dev/null | grep -q "$BUNDLE_ID" || /usr/sbin/kextstat 2>/dev/null | grep -q "$BUNDLE_ID"; then
+            echo "DISABLED"
+            exit 0
+        else
+            echo "FAILED_TO_DISABLE"
+            exit 1
+        fi
+        ;;
+    enable)
+        /sbin/kextunload -b "$BUNDLE_ID" 2>/dev/null || /usr/bin/kmutil unload -b "$BUNDLE_ID" 2>/dev/null
+        if /usr/bin/kmutil showloaded 2>/dev/null | grep -q "$BUNDLE_ID" || /usr/sbin/kextstat 2>/dev/null | grep -q "$BUNDLE_ID"; then
+            echo "FAILED_TO_ENABLE"
+            exit 1
+        else
+            echo "ENABLED"
+            exit 0
+        fi
+        ;;
+    fan)
+        FAN_EXEC="$FAN_BINARY"
+        if [ ! -f "$FAN_EXEC" ]; then
+            FAN_EXEC="$FALLBACK_FAN"
+        fi
+        if [ ! -f "$FAN_EXEC" ]; then
+            echo "FAN_BINARY_NOT_FOUND"
+            exit 1
+        fi
+        case "$2" in
+            auto)
+                "$FAN_EXEC" auto
+                exit $?
+                ;;
+            manual)
+                if [[ "$3" =~ ^[0-9]+$ ]]; then
+                    "$FAN_EXEC" manual "$3"
+                    exit $?
+                else
+                    echo "INVALID_RPM"
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "INVALID_FAN_COMMAND"
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        echo "Usage: $0 {status|disable|enable|fan [auto|manual <rpm>]}"
+        exit 1
+        ;;
+esac

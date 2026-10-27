@@ -1,0 +1,27 @@
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Build artifacts & compiled binaries
+build/
+Resources/turbocontrol-fan
+*.o
+*.dSYM/
+
+# Xcode / SwiftPM / IDE files
+.build/
+.swiftpm/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+xcuserdata/
+.vscode/
+.idea/
+
+# Temporary / local files
+*.log
+*.tmp
+*.swp
+*~
