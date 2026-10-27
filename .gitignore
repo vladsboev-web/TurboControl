@@ -25,3 +25,8 @@ xcuserdata/
 *.tmp
 *.swp
 *~
+
+# Local drafts, notes & articles
+HabrArticle/
+docs_local/
+
