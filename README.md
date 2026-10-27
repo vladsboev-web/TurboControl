@@ -27,11 +27,16 @@
 
 ---
 
-### 🚀 Простая установка «для чайников» (в 3 шага)
+### 🚀 Простая установка
 
 Вам не нужно ничего настраивать вручную. Выберите самый удобный способ:
 
-#### Способ А: Установка двойным кликом (Самый простой)
+#### Способ А: Установка через Homebrew (Самый быстрый)
+```bash
+brew install --cask vladsboev-web/tap/turbocontrol
+```
+
+#### Способ Б: Установка двойным кликом (Без использования командной строки)
 1. **Скачайте проект:** На странице GitHub нажмите зеленую кнопку **`<> Code`** → **`Download ZIP`** и распакуйте архив (например, в «Загрузки»).
 2. Откройте распакованную папку `TurboControl` и **дважды кликните** по файлу **`Install TurboControl.command`**.
    > 💡 *Если macOS покажет окно «Не удается открыть файл, так как не удалось проверить разработчика»:* нажмите **«Готово» (или ОК)**, затем кликните по файлу `Install TurboControl.command` **правой кнопкой мыши**, зажав клавишу **`Control`**, выберите **«Открыть»** → **«Открыть»**.
@@ -40,13 +45,12 @@
    - ⚠️ *При вводе пароля в Терминале буквы и звездочки НЕ отображаются — это стандартная защита macOS. Просто наберите пароль вслепую и нажмите `Enter`.*
 4. Готово! Приложение автоматически установится в «Программы» (`/Applications/TurboControl.app`) и запустится — в правом верхнем углу экрана возле часов появится значок ⚡️ или 🍃.
 
-#### Способ Б: Установка одной командой через Терминал
+#### Способ В: Установка одной командой через сборку из Git
 1. Откройте **Терминал** (`Cmd + Пробел` → напишите `Терминал` → `Enter`).
-2. Скопируйте и вставьте следующую команду (или перетащите папку проекта в Терминал):
+2. Скопируйте и вставьте следующую команду:
    ```bash
    git clone https://github.com/vladsboev-web/TurboControl.git ~/Downloads/TurboControl && cd ~/Downloads/TurboControl && ./install.sh
    ```
-   *(Если вы уже скачали папку вручную, просто перейдите в неё и запустите `./install.sh`)*.
 3. Введите пароль от Mac (вслепую) и нажмите `Enter`.
 
 ---
@@ -59,7 +63,11 @@
   3. Перезагрузите Mac по запросу системы — после этого всё будет работать в один клик.
 
 ### 🗑 Удаление (Uninstall)
-Чтобы полностью удалить приложение и вернуть стандартные настройки:
+Если устанавливали через Homebrew:
+```bash
+brew uninstall --cask turbocontrol
+```
+Или вручную:
 ```bash
 pkill -f TurboControl
 sudo /sbin/kextunload -b com.rugarciap.DisableTurboBoost 2>/dev/null || true
@@ -94,11 +102,16 @@ sudo rm -rf /Applications/TurboControl.app /usr/local/bin/turbocontrol-helper /u
 
 ---
 
-### 🚀 Beginner-Friendly Installation (Step-by-Step)
+### 🚀 Easy Installation
 
-Requirements: **Intel-based Mac**, **macOS 12.0 Monterey or newer**, and Command Line Tools (`xcode-select --install` if not installed).
+Requirements: **Intel-based Mac**, **macOS 12.0 Monterey or newer**.
 
-#### Option A: Double-Click Installer (Easiest)
+#### Option A: Install via Homebrew (Fastest)
+```bash
+brew install --cask vladsboev-web/tap/turbocontrol
+```
+
+#### Option B: Double-Click Installer (No Terminal Knowledge Required)
 1. **Download the project:** Click the green **`<> Code`** button on GitHub → **`Download ZIP`**, then unzip the downloaded folder.
 2. Open the `TurboControl` folder and **double-click** **`Install TurboControl.command`**.
    > 💡 *If macOS says the file cannot be opened because the developer is unidentified:* click **Done/OK**, then **Right-Click** (or `Control + Click`) on `Install TurboControl.command` and choose **Open** → **Open**.
@@ -107,13 +120,12 @@ Requirements: **Intel-based Mac**, **macOS 12.0 Monterey or newer**, and Command
    - ⚠️ *Note: Nothing will appear on screen while you type your password (no stars or letters) — this is normal macOS security. Just type it and hit `Enter`.*
 4. Done! **TurboControl** is now installed in `/Applications/TurboControl.app` and running in your top-right Menu Bar (⚡️ / 🍃 icon).
 
-#### Option B: One-Line Terminal Install
+#### Option C: Build & Install from Source via Terminal
 1. Open **Terminal** (`Cmd + Space` → type `Terminal` → `Enter`).
 2. Run:
    ```bash
    git clone https://github.com/vladsboev-web/TurboControl.git ~/Downloads/TurboControl && cd ~/Downloads/TurboControl && ./install.sh
    ```
-   *(Or navigate to your downloaded folder with `cd` and run `./install.sh`)*.
 3. Enter your Mac password when prompted and press `Enter`.
 
 ---
@@ -145,7 +157,11 @@ To build `.app` bundle manually without installing:
 ```
 
 ### 🗑 Uninstall
-To completely remove TurboControl and restore default Apple fan & CPU settings:
+If installed via Homebrew:
+```bash
+brew uninstall --cask turbocontrol
+```
+Or manually:
 ```bash
 pkill -f TurboControl
 sudo /sbin/kextunload -b com.rugarciap.DisableTurboBoost 2>/dev/null || true
