@@ -45,6 +45,8 @@ enum L10n {
     static var errHelperSetupRequired: String { isEn ? "Admin permissions required for setup" : "Требуются права для разовой настройки" }
     static var errSudoersRequired: String { isEn ? "Sudoers setup required" : "Требуется настройка прав sudoers" }
     static var errToggleFailed: String { isEn ? "Failed to switch mode" : "Ошибка переключения" }
+    static var errKextApprovalRequired: String { isEn ? "Allow kext in Settings → Privacy & Security" : "Разрешите драйвер в Настройках → Защита" }
+    static var errKextRebootRequired: String { isEn ? "Reboot Mac to finish kext activation" : "Перезагрузите Mac для активации драйвера" }
     
     // Metric Cards
     static var cpuTitle: String { isEn ? "Processor (CPU)" : "Процессор (CPU)" }

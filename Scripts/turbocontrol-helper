@@ -8,9 +8,14 @@ BUNDLE_ID="com.rugarciap.DisableTurboBoost"
 FAN_BINARY="/usr/local/bin/turbocontrol-fan"
 FALLBACK_FAN="/Applications/TurboControl.app/Contents/Resources/turbocontrol-fan"
 
+is_kext_loaded() {
+    /usr/sbin/kextstat -b "$BUNDLE_ID" 2>/dev/null | grep -q "$BUNDLE_ID" || \
+    /usr/bin/kmutil showloaded --bundle-identifier "$BUNDLE_ID" 2>/dev/null | grep -q "$BUNDLE_ID"
+}
+
 case "$1" in
     status)
-        if /usr/bin/kmutil showloaded 2>/dev/null | grep -q "$BUNDLE_ID" || /usr/sbin/kextstat 2>/dev/null | grep -q "$BUNDLE_ID"; then
+        if is_kext_loaded; then
             echo "DISABLED"
             exit 0
         else
@@ -24,22 +29,43 @@ case "$1" in
                 cp -R "$FALLBACK_KEXT" "$KEXT_PATH" 2>/dev/null
             fi
         fi
+        KM_OUT=""
+        KM_RC=0
         if [ -d "$KEXT_PATH" ]; then
+            xattr -cr "$KEXT_PATH" 2>/dev/null || true
             chown -R root:wheel "$KEXT_PATH" 2>/dev/null
             chmod -R 755 "$KEXT_PATH" 2>/dev/null
-            /sbin/kextload "$KEXT_PATH" 2>/dev/null || /usr/bin/kmutil load -p "$KEXT_PATH" 2>/dev/null || /usr/bin/kextutil "$KEXT_PATH" 2>/dev/null
+            if [ -x /usr/bin/kmutil ]; then
+                KM_OUT=$(/usr/bin/kmutil load -p "$KEXT_PATH" 2>&1)
+                KM_RC=$?
+            fi
+            if ! is_kext_loaded; then
+                KEXTLOAD_OUT=$(/sbin/kextload "$KEXT_PATH" 2>&1 || /usr/bin/kextutil "$KEXT_PATH" 2>&1)
+                KM_OUT="$KM_OUT $KEXTLOAD_OUT"
+            fi
+        else
+            echo "KEXT_NOT_FOUND"
+            exit 1
         fi
-        if /usr/bin/kmutil showloaded 2>/dev/null | grep -q "$BUNDLE_ID" || /usr/sbin/kextstat 2>/dev/null | grep -q "$BUNDLE_ID"; then
+        if is_kext_loaded; then
             echo "DISABLED"
             exit 0
         else
-            echo "FAILED_TO_DISABLE"
-            exit 1
+            if [ "$KM_RC" -eq 27 ] || echo "$KM_OUT" | grep -qiE "approval|System Policy|User approval"; then
+                echo "NEEDS_APPROVAL"
+                exit 27
+            elif [ "$KM_RC" -eq 28 ] || echo "$KM_OUT" | grep -qiE "reboot|restart"; then
+                echo "NEEDS_REBOOT"
+                exit 28
+            else
+                echo "FAILED_TO_DISABLE: $KM_OUT"
+                exit 1
+            fi
         fi
         ;;
     enable)
         /sbin/kextunload -b "$BUNDLE_ID" 2>/dev/null || /usr/bin/kmutil unload -b "$BUNDLE_ID" 2>/dev/null
-        if /usr/bin/kmutil showloaded 2>/dev/null | grep -q "$BUNDLE_ID" || /usr/sbin/kextstat 2>/dev/null | grep -q "$BUNDLE_ID"; then
+        if is_kext_loaded; then
             echo "FAILED_TO_ENABLE"
             exit 1
         else

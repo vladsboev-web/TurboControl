@@ -73,8 +73,9 @@ if [ -f "$PROJECT_DIR/Resources/AppIcon.icns" ]; then
     cp "$PROJECT_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
 
-# 5. Ad-hoc Code Sign
+# 5. Ad-hoc Code Sign (sign Mach-O binaries explicitly to keep legacy DisableTurboBoost.kext unsigned for Apple's SHA-1 whitelist)
 echo "--> Signing TurboControl.app..."
-codesign --force --deep --sign - "$APP_DIR"
+codesign --force --sign - "$APP_DIR/Contents/Resources/turbocontrol-fan"
+codesign --force --sign - "$APP_DIR"
 
 echo "==> Build complete: $APP_DIR"

@@ -133,7 +133,7 @@ final class TurboBoostService: ObservableObject {
             installHelperWithPrompt { [weak self] installed in
                 guard let self = self else { return }
                 if installed {
-                    self.executeToggle(disabled: disabled, completion: completion)
+                    self.executeToggle(disabled: disabled, allowRetry: false, completion: completion)
                 } else {
                     self.isWorking = false
                     self.statusMessage = L10n.errHelperSetupRequired
@@ -141,11 +141,11 @@ final class TurboBoostService: ObservableObject {
                 }
             }
         } else {
-            executeToggle(disabled: disabled, completion: completion)
+            executeToggle(disabled: disabled, allowRetry: true, completion: completion)
         }
     }
     
-    private func executeToggle(disabled: Bool, completion: ((Bool) -> Void)? = nil) {
+    private func executeToggle(disabled: Bool, allowRetry: Bool = true, completion: ((Bool) -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             let command = disabled ? "disable" : "enable"
@@ -161,6 +161,7 @@ final class TurboBoostService: ObservableObject {
             
             var success = false
             var needsHelperReinstall = false
+            var customErrorMessage: String?
             do {
                 try task.run()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -170,8 +171,17 @@ final class TurboBoostService: ObservableObject {
                 let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let errOutput = String(data: errData, encoding: .utf8) ?? ""
                 
-                if errOutput.contains("password is required") || errOutput.contains("a terminal is required") {
+                if errOutput.contains("password is required") || errOutput.contains("a terminal is required") || output.contains("KEXT_NOT_FOUND") {
                     needsHelperReinstall = true
+                } else if output.contains("NEEDS_APPROVAL") || task.terminationStatus == 27 {
+                    customErrorMessage = L10n.errKextApprovalRequired
+                    DispatchQueue.main.async {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?General") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                } else if output.contains("NEEDS_REBOOT") || task.terminationStatus == 28 {
+                    customErrorMessage = L10n.errKextRebootRequired
                 } else if disabled && output == "DISABLED" {
                     success = true
                 } else if !disabled && output == "ENABLED" {
@@ -185,10 +195,16 @@ final class TurboBoostService: ObservableObject {
             
             if needsHelperReinstall {
                 DispatchQueue.main.async {
+                    guard allowRetry else {
+                        self.isWorking = false
+                        self.statusMessage = L10n.errSudoersRequired
+                        completion?(false)
+                        return
+                    }
                     self.installHelperWithPrompt { [weak self] installed in
                         guard let self = self else { return }
                         if installed {
-                            self.executeToggle(disabled: disabled, completion: completion)
+                            self.executeToggle(disabled: disabled, allowRetry: false, completion: completion)
                         } else {
                             self.isWorking = false
                             self.statusMessage = L10n.errSudoersRequired
@@ -205,7 +221,9 @@ final class TurboBoostService: ObservableObject {
                 self.isTurboDisabled = finalStatus
                 self.isWorking = false
                 NotificationCenter.default.post(name: .menuBarDisplayChanged, object: nil)
-                if !success && finalStatus != disabled {
+                if let customErrorMessage = customErrorMessage, finalStatus != disabled {
+                    self.statusMessage = customErrorMessage
+                } else if !success && finalStatus != disabled {
                     self.statusMessage = L10n.errToggleFailed
                 }
                 completion?(finalStatus == disabled)
