@@ -25,6 +25,7 @@ xcuserdata/
 *.tmp
 *.swp
 *~
+!Resources/DisableTurboBoost.kext/Contents/Info.plist~
 
 # Local drafts, notes & articles
 HabrArticle/
