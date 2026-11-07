@@ -13,6 +13,8 @@ final class SystemMonitor: ObservableObject {
     @Published var cpuLoad: Double = 0.0
     @Published var gpuLoad: Double = 0.0
     
+    var isPopoverVisible: Bool = false
+    
     private let smc = SMCReader.shared
     private let usage = UsageReader()
     private let pollQueue = DispatchQueue(label: "com.turbocontrol.pollQueue", qos: .utility)
@@ -49,23 +51,38 @@ final class SystemMonitor: ObservableObject {
     }
     
     func updateMetrics() {
+        let shouldReadLoad = isPopoverVisible
         pollQueue.async { [weak self] in
             guard let self = self else { return }
             
             let cpuT = self.smc.getCPUTemperature()
             let gpuT = self.smc.getGPUTemperature()
             let fan = self.smc.getFanRPM()
-            let cpuL = self.usage.getCPULoad()
-            let gpuL = self.usage.getGPULoad()
+            let cpuL = shouldReadLoad ? self.usage.getCPULoad() : self.cpuLoad
+            let gpuL = shouldReadLoad ? self.usage.getGPULoad() : self.gpuLoad
             
             DispatchQueue.main.async {
                 self.cpuTemp = cpuT
                 self.gpuTemp = gpuT
                 self.fanRPM = fan
-                self.cpuLoad = cpuL
-                self.gpuLoad = gpuL
+                if shouldReadLoad {
+                    self.cpuLoad = cpuL
+                    self.gpuLoad = gpuL
+                }
                 
                 NotificationCenter.default.post(name: .metricsDidUpdate, object: nil)
+            }
+        }
+    }
+    
+    func refreshFanRPMQuickly() {
+        for delay in [0.35, 1.0, 2.0] {
+            pollQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self else { return }
+                let fan = self.smc.getFanRPM()
+                DispatchQueue.main.async {
+                    self.fanRPM = fan
+                }
             }
         }
     }

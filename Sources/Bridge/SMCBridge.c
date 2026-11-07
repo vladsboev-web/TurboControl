@@ -133,6 +133,11 @@ static double smc_read_key(const char *key) {
         float val = 0.0f;
         memcpy(&val, output.bytes, 4);
         return (double)val;
+    } else if (strcmp(typeStr, "ui16") == 0 && dataSize >= 2) {
+        int val = ((unsigned char)output.bytes[0] << 8) | (unsigned char)output.bytes[1];
+        return (double)val;
+    } else if (strcmp(typeStr, "ui8 ") == 0 && dataSize >= 1) {
+        return (double)((unsigned char)output.bytes[0]);
     }
     return -1.0;
 }
@@ -179,4 +184,16 @@ double smc_get_fan_max_rpm(void) {
     double rpm = smc_read_key("F0Mx");
     if (rpm <= 0.0) rpm = 7200.0;
     return rpm;
+}
+
+int smc_is_fan_manual_mode(void) {
+    double fs = smc_read_key("FS! ");
+    if (fs >= 0.0) {
+        return (((int)fs & 1) != 0) ? 1 : 0;
+    }
+    double md = smc_read_key("F0Md");
+    if (md >= 0.0) {
+        return (((int)md & 1) != 0) ? 1 : 0;
+    }
+    return 0;
 }

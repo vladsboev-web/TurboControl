@@ -33,4 +33,8 @@ final class SMCReader {
     func getFanMaxRPM() -> Double {
         return smc_get_fan_max_rpm()
     }
+    
+    func isFanManualMode() -> Bool {
+        return smc_is_fan_manual_mode() != 0
+    }
 }

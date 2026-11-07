@@ -74,9 +74,9 @@ case "$1" in
         fi
         ;;
     fan)
-        FAN_EXEC="$FAN_BINARY"
+        FAN_EXEC="$FALLBACK_FAN"
         if [ ! -f "$FAN_EXEC" ]; then
-            FAN_EXEC="$FALLBACK_FAN"
+            FAN_EXEC="$FAN_BINARY"
         fi
         if [ ! -f "$FAN_EXEC" ]; then
             echo "FAN_BINARY_NOT_FOUND"

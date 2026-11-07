@@ -89,7 +89,11 @@ int main(int argc, char **argv) {
     
     if (strcmp(argv[1], "auto") == 0) {
         unsigned char modeBytes[2] = {0x00, 0x00};
-        if (smc_write_key("FS! ", modeBytes, 2) == 0) {
+        int r1 = smc_write_key("FS! ", modeBytes, 2);
+        unsigned char mdByte[1] = {0x00};
+        int r2 = smc_write_key("F0Md", mdByte, 1);
+        smc_write_key("F1Md", mdByte, 1);
+        if (r1 == 0 || r2 == 0) {
             if (g_smcConn != 0) IOServiceClose(g_smcConn);
             printf("FAN_AUTO_OK\n");
             return 0;
@@ -110,14 +114,22 @@ int main(int argc, char **argv) {
         if (targetRpm < 1200) targetRpm = 1200;
         if (targetRpm > 7200) targetRpm = 7200;
         
-        // 1. Enable manual mode (bit 0 = 1)
-        unsigned char modeBytes[2] = {0x00, 0x01};
-        smc_write_key("FS! ", modeBytes, 2);
+        // 1. Enable manual mode (FS! = 0x0003 for 1 or 2 fans, plus F0Md/F1Md if present)
+        unsigned char modeBytes[2] = {0x00, 0x03};
+        if (smc_write_key("FS! ", modeBytes, 2) != 0) {
+            unsigned char modeSingle[2] = {0x00, 0x01};
+            smc_write_key("FS! ", modeSingle, 2);
+        }
+        unsigned char mdByte[1] = {0x01};
+        smc_write_key("F0Md", mdByte, 1);
+        smc_write_key("F1Md", mdByte, 1);
         
         // 2. Write Target RPM in fpe2 format (rpm * 4)
         int raw = targetRpm * 4;
         unsigned char rpmBytes[2] = { (unsigned char)((raw >> 8) & 0xFF), (unsigned char)(raw & 0xFF) };
-        if (smc_write_key("F0Tg", rpmBytes, 2) == 0) {
+        int ok0 = smc_write_key("F0Tg", rpmBytes, 2);
+        smc_write_key("F1Tg", rpmBytes, 2);
+        if (ok0 == 0) {
             if (g_smcConn != 0) IOServiceClose(g_smcConn);
             printf("FAN_MANUAL_OK %d\n", targetRpm);
             return 0;

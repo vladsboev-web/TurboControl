@@ -15,6 +15,7 @@ double smc_get_gpu_temp(void);
 double smc_get_fan_rpm(void);
 double smc_get_fan_min_rpm(void);
 double smc_get_fan_max_rpm(void);
+int smc_is_fan_manual_mode(void);
 
 #ifdef __cplusplus
 }

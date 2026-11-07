@@ -44,7 +44,9 @@ final class FanControlService: ObservableObject {
     
     private let helperPath = "/usr/local/bin/turbocontrol-helper"
     private let fanQueue = DispatchQueue(label: "com.turbocontrol.fanQueue", qos: .userInitiated)
-    private var lastAppliedRPM: Int = 0
+    private var lastAppliedRPM: Int = -1
+    private var smoothedTemp: Double = 0.0
+    private var smartIdleAutoActive: Bool = false
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
@@ -58,7 +60,7 @@ final class FanControlService: ObservableObject {
         let savedRPM = UserDefaults.standard.double(forKey: "targetManualRPM")
         self.targetManualRPM = savedRPM >= 1200 ? savedRPM : 3500
         
-        // Listen to sensor updates for Smart Curve
+        // Listen to sensor updates for Smart Curve and mode enforcement
         NotificationCenter.default.publisher(for: .metricsDidUpdate)
             .sink { [weak self] _ in
                 self?.handleMetricsUpdate()
@@ -85,54 +87,121 @@ final class FanControlService: ObservableObject {
     }
     
     private func handleMetricsUpdate() {
-        guard currentMode == .smart else { return }
+        let smcManual = SMCReader.shared.isFanManualMode()
+        
+        switch currentMode {
+        case .auto:
+            // If SMC is still stuck in manual mode (e.g. previous command failed), enforce Auto
+            if smcManual {
+                setFanAuto(waitUntilDone: false)
+            }
+            return
+            
+        case .max:
+            // If macOS reset SMC to Auto after sleep, re-apply Max
+            if !smcManual || lastAppliedRPM != 7200 {
+                setFanManual(rpm: 7200)
+            }
+            return
+            
+        case .manual:
+            let target = Int(targetManualRPM)
+            if !smcManual || abs(lastAppliedRPM - target) >= 50 {
+                setFanManual(rpm: target)
+            }
+            return
+            
+        case .smart:
+            break
+        }
         
         let cpuTemp = SystemMonitor.shared.cpuTemp
         let gpuTemp = SystemMonitor.shared.gpuTemp
-        let maxTemp = max(cpuTemp, gpuTemp)
-        guard maxTemp > 0 else { return }
+        let rawTemp = max(cpuTemp, gpuTemp)
+        guard rawTemp > 0 else { return }
         
-        let targetRPM = calculateSmartRPM(temp: maxTemp)
+        // Asymmetric smoothing: react faster to heating up (0.55), cool down gradually (0.20)
+        // so the fan keeps spinning while the heatsink is still warm (preventing Auto > Smart inversion)
+        if smoothedTemp <= 0.0 {
+            smoothedTemp = rawTemp
+        } else if rawTemp > smoothedTemp {
+            smoothedTemp = smoothedTemp * 0.45 + rawTemp * 0.55
+        } else {
+            smoothedTemp = smoothedTemp * 0.80 + rawTemp * 0.20
+        }
         
-        // Only update if difference >= 150 RPM to prevent constant micro-adjustments
-        if abs(targetRPM - lastAppliedRPM) >= 150 {
+        // Below 52°C (or up to 55°C while already quiet): release to Apple Auto so fan can stay at 0 RPM (Silent)
+        if smartIdleAutoActive {
+            if smoothedTemp < 55.0 && rawTemp < 58.0 {
+                if smcManual {
+                    setFanAuto(waitUntilDone: false)
+                }
+                return
+            } else {
+                smartIdleAutoActive = false
+            }
+        } else if smoothedTemp < 52.0 && rawTemp < 54.0 {
+            smartIdleAutoActive = true
+            setFanAuto(waitUntilDone: false)
+            return
+        }
+        
+        var targetRPM = calculateSmartRPM(temp: smoothedTemp)
+        
+        // Never spin down abruptly while cooling down: cap RPM drop to at most 350 RPM per poll cycle
+        if lastAppliedRPM > 0 && targetRPM < lastAppliedRPM {
+            targetRPM = max(targetRPM, lastAppliedRPM - 350)
+        }
+        
+        // Update if SMC lost manual state (e.g. after sleep) or if difference >= 150 RPM
+        if !smcManual || abs(targetRPM - lastAppliedRPM) >= 150 {
             setFanManual(rpm: targetRPM)
         }
     }
     
     private func calculateSmartRPM(temp: Double) -> Int {
-        // Smart early cooling curve:
-        // < 50°C -> 1200 RPM (quiet)
-        // 50°C - 65°C -> 1800 - 3400 RPM (ramp-up before heat builds up)
-        // 65°C - 75°C -> 3400 - 4900 RPM (active cooling to stay below 75°C)
-        // 75°C - 85°C -> 4900 - 6400 RPM (high performance cooling)
-        // > 85°C -> 7200 RPM (emergency max)
-        if temp < 50.0 {
-            return 1200
+        // Smart early cooling curve (active from 55°C):
+        // 52°C - 55°C -> 1500 - 2000 RPM (gentle transition from silent)
+        // 55°C - 65°C -> 2000 - 3600 RPM (early ramp-up before heat builds up)
+        // 65°C - 75°C -> 3600 - 5200 RPM (active cooling to keep temp < 75°C)
+        // 75°C - 84°C -> 5200 - 6600 RPM (high performance cooling)
+        // >= 84°C     -> 7200 RPM (max blast)
+        if temp < 55.0 {
+            let ratio = max(0.0, (temp - 52.0) / 3.0)
+            return Int(1500.0 + ratio * (2000.0 - 1500.0))
         } else if temp < 65.0 {
-            let ratio = (temp - 50.0) / 15.0
-            return Int(1800.0 + ratio * (3400.0 - 1800.0))
+            let ratio = (temp - 55.0) / 10.0
+            return Int(2000.0 + ratio * (3600.0 - 2000.0))
         } else if temp < 75.0 {
             let ratio = (temp - 65.0) / 10.0
-            return Int(3400.0 + ratio * (4900.0 - 3400.0))
-        } else if temp < 85.0 {
-            let ratio = (temp - 75.0) / 10.0
-            return Int(4900.0 + ratio * (6400.0 - 4900.0))
+            return Int(3600.0 + ratio * (5200.0 - 3600.0))
+        } else if temp < 84.0 {
+            let ratio = (temp - 75.0) / 9.0
+            return Int(5200.0 + ratio * (6600.0 - 5200.0))
         } else {
             return 7200
         }
     }
     
     func applyCurrentMode() {
+        lastAppliedRPM = -1
         switch currentMode {
         case .auto:
+            smartIdleAutoActive = false
             setFanAuto(waitUntilDone: false)
         case .smart:
-            lastAppliedRPM = 0
+            smartIdleAutoActive = false
+            let currentMax = max(SystemMonitor.shared.cpuTemp, SystemMonitor.shared.gpuTemp)
+            if currentMax > 0 {
+                // Keep higher of smoothedTemp and currentMax so switching to Smart on a hot Mac immediately cools it
+                smoothedTemp = max(smoothedTemp, currentMax)
+            }
             handleMetricsUpdate()
         case .max:
+            smartIdleAutoActive = false
             setFanManual(rpm: 7200)
         case .manual:
+            smartIdleAutoActive = false
             setFanManual(rpm: Int(targetManualRPM))
         }
     }
@@ -146,6 +215,9 @@ final class FanControlService: ObservableObject {
             task.arguments = ["-n", helperPath, "fan", "auto"]
             try? task.run()
             task.waitUntilExit()
+            if !waitUntilDone {
+                SystemMonitor.shared.refreshFanRPMQuickly()
+            }
         }
         if waitUntilDone {
             fanQueue.sync(execute: work)
@@ -163,6 +235,7 @@ final class FanControlService: ObservableObject {
             task.arguments = ["-n", helperPath, "fan", "manual", "\(rpm)"]
             try? task.run()
             task.waitUntilExit()
+            SystemMonitor.shared.refreshFanRPMQuickly()
         }
     }
 }

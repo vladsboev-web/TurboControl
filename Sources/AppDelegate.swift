@@ -210,6 +210,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func showPopover(sender: AnyObject?) {
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
+        SystemMonitor.shared.isPopoverVisible = true
         SystemMonitor.shared.updateMetrics()
         TurboBoostService.shared.refreshStatus()
         
@@ -235,6 +236,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func closePopover(sender: AnyObject?) {
+        SystemMonitor.shared.isPopoverVisible = false
         panel.orderOut(sender)
     }
     
