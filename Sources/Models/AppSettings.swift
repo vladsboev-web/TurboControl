@@ -1,5 +1,56 @@
 import Foundation
 import Combine
+import SwiftUI
+
+enum AppTheme: String, CaseIterable {
+    case auto = "auto"
+    case light = "light"
+    case dark = "dark"
+    
+    var iconName: String {
+        switch self {
+        case .auto: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+    
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .auto: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+    
+    var next: AppTheme {
+        switch self {
+        case .auto: return .light
+        case .light: return .dark
+        case .dark: return .auto
+        }
+    }
+}
+
+enum PowerTurboAction: String, CaseIterable {
+    case keep = "keep"
+    case enable = "enable"
+    case disable = "disable"
+}
+
+enum AppTurboRule: String, Codable, CaseIterable {
+    case auto = "auto"
+    case disable = "disable"
+    case enable = "enable"
+    
+    var next: AppTurboRule {
+        switch self {
+        case .auto: return .disable
+        case .disable: return .enable
+        case .enable: return .auto
+        }
+    }
+}
 
 enum AppLanguage: String, CaseIterable {
     case ru = "ru"
@@ -69,14 +120,23 @@ enum L10n {
     }
     static func fanModeDesc(_ mode: FanMode) -> String {
         switch mode {
-        case .auto: return isEn ? "Default quiet Apple profile (heats up to 90°C)" : "Заводской тихий профиль Apple (нагрев до 90°C)"
-        case .smart: return isEn ? "Early cooling from 55°C (keeps temp < 75°C)" : "Ранний обдув с 55°C (удерживает температуру < 75°C)"
+        case .auto: return isEn ? "Quiet Apple profile (up to 90°C)" : "Тихий профиль Apple (до 90°C)"
+        case .smart: return isEn ? "Early cooling from 55°C (< 75°C)" : "Ранний обдув с 55°C (держит < 75°C)"
         case .max: return isEn ? "Full blast at 7200 RPM" : "Полная продувка на 7200 RPM"
         case .manual: return isEn ? "Custom manual speed control" : "Ручное управление скоростью"
         }
     }
     
     // Settings View
+    static var themeLabel: String { isEn ? "Appearance:" : "Тема:" }
+    static func themeTitle(_ theme: AppTheme) -> String {
+        switch theme {
+        case .auto: return isEn ? "Auto" : "Авто"
+        case .light: return isEn ? "Light" : "Светлая"
+        case .dark: return isEn ? "Dark" : "Тёмная"
+        }
+    }
+    static var themeTooltip: String { isEn ? "Switch theme (Auto / Light / Dark)" : "Сменить тему (Авто / Светлая / Тёмная)" }
     static var languageLabel: String { isEn ? "Interface language:" : "Язык интерфейса:" }
     static var updateFreqLabel: String { isEn ? "Refresh interval:" : "Частота обновления:" }
     static func secondsBadge(_ sec: Double) -> String {
@@ -93,6 +153,65 @@ enum L10n {
     
     static var showTempTitle: String { isEn ? "Show temperature in Menu Bar" : "Температура в строке меню" }
     static var showTempSub: String { isEn ? "Display CPU °C next to the menu bar icon" : "Показывать °C рядом со значком на панели" }
+    
+    // Automation Settings
+    static var automationSectionTitle: String { isEn ? "Turbo Boost Automation" : "Автоматизация Turbo Boost" }
+    static var powerRuleTitle: String { isEn ? "Power source" : "По питанию" }
+    static var onACLabel: String { isEn ? "On charger:" : "При зарядке:" }
+    static var onBatteryLabel: String { isEn ? "On battery:" : "От аккумулятора:" }
+    static func powerActionTitle(_ action: PowerTurboAction) -> String {
+        switch action {
+        case .keep: return isEn ? "Keep" : "Не менять"
+        case .enable: return isEn ? "Enable" : "Включать"
+        case .disable: return isEn ? "Disable" : "Выключать"
+        }
+    }
+    static var allowTurboLowBattAC: String {
+        isEn ? "Enable on low battery when plugged in" : "Вкл. на низком заряде при зарядке"
+    }
+    static var tempRuleTitle: String { isEn ? "By CPU temperature" : "По температуре CPU" }
+    static var batteryRuleTitle: String { isEn ? "By battery level" : "По уровню заряда" }
+    static var advancedSettingsBtn: String { isEn ? "Advanced" : "Расширенная настройка" }
+    static var simpleSettingsBtn: String { isEn ? "Simple" : "Обычная" }
+    static func tempDisableAt(_ t: Double) -> String {
+        isEn ? String(format: "Disable ≥ %.0f°C", t) : String(format: "Выкл ≥ %.0f°C", t)
+    }
+    static func tempEnableAt(_ t: Double) -> String {
+        isEn ? String(format: "Enable ≤ %.0f°C", t) : String(format: "Вкл ≤ %.0f°C", t)
+    }
+    static func battDisableAt(_ p: Double) -> String {
+        isEn ? String(format: "Disable ≤ %.0f%%", p) : String(format: "Выкл ≤ %.0f%%", p)
+    }
+    static func battEnableAt(_ p: Double) -> String {
+        isEn ? String(format: "Enable ≥ %.0f%%", p) : String(format: "Вкл ≥ %.0f%%", p)
+    }
+    static var minGap10Deg: String { isEn ? "Min 10°C gap" : "Зазор мин. 10°C" }
+    static var minGap10Pct: String { isEn ? "Min 10% gap" : "Зазор мин. 10%" }
+    
+    // Heavy Processes Window
+    static var top5BtnTitle: String { isEn ? "Top-5" : "Топ-5" }
+    static var top5Tooltip: String { isEn ? "Who's heating the Mac? (Top 5 processes)" : "Кто греет Mac? (Топ-5 процессов)" }
+    static var heavyProcessesTitle: String { isEn ? "Who's heating Mac?" : "Кто греет Mac?" }
+    static var sortCPU: String { "CPU %" }
+    static var sortGPU: String { "GPU" }
+    static var sortEnergy: String { isEn ? "Energy" : "Энергия" }
+    static var noHeavyProcesses: String { isEn ? "No active user processes" : "Нет активных процессов" }
+    static var killProcessTooltip: String { isEn ? "Quit process" : "Завершить процесс" }
+    static var turboRuleTooltip: String { isEn ? "Click to change Turbo Boost rule when active" : "Нажми для смены правила Turbo при активности" }
+    static func appRuleBadge(_ rule: AppTurboRule) -> String {
+        switch rule {
+        case .auto: return isEn ? "Auto" : "Авто"
+        case .disable: return isEn ? "Off" : "Выкл"
+        case .enable: return isEn ? "On" : "Вкл"
+        }
+    }
+    static var heavyProcessesHint: String {
+        isEn ? "⚡ applies Turbo rule when app is active" : "⚡ применяет правило Turbo, пока окно активно"
+    }
+    
+    // Helper Update Banner
+    static var helperOutdatedTitle: String { isEn ? "System helper update required" : "Требуется обновить системный хелпер" }
+    static var helperUpdateBtn: String { isEn ? "Update" : "Обновить" }
 }
 
 final class AppSettings: ObservableObject {
@@ -107,6 +226,124 @@ final class AppSettings: ObservableObject {
         static let showTempInMenuBar = "showTempInMenuBar"
         static let userChosenTurboDisabled = "userChosenTurboDisabled"
         static let language = "appLanguage"
+        static let theme = "appTheme"
+        static let onACPowerAction = "onACPowerAction"
+        static let onBatteryPowerAction = "onBatteryPowerAction"
+        static let allowTurboOnLowBatteryWhenPluggedIn = "allowTurboOnLowBatteryWhenPluggedIn"
+        static let autoTempEnabled = "autoTempEnabled"
+        static let autoTempDisableThreshold = "autoTempDisableThreshold"
+        static let autoTempEnableThreshold = "autoTempEnableThreshold"
+        static let autoTempAdvanced = "autoTempAdvanced"
+        static let autoBatteryEnabled = "autoBatteryEnabled"
+        static let autoBatteryDisableThreshold = "autoBatteryDisableThreshold"
+        static let autoBatteryEnableThreshold = "autoBatteryEnableThreshold"
+        static let autoBatteryAdvanced = "autoBatteryAdvanced"
+        static let appTurboRules = "appTurboRules"
+    }
+    
+    @Published var onACPowerAction: PowerTurboAction {
+        didSet { defaults.set(onACPowerAction.rawValue, forKey: Keys.onACPowerAction) }
+    }
+    @Published var onBatteryPowerAction: PowerTurboAction {
+        didSet { defaults.set(onBatteryPowerAction.rawValue, forKey: Keys.onBatteryPowerAction) }
+    }
+    @Published var allowTurboOnLowBatteryWhenPluggedIn: Bool {
+        didSet { defaults.set(allowTurboOnLowBatteryWhenPluggedIn, forKey: Keys.allowTurboOnLowBatteryWhenPluggedIn) }
+    }
+    
+    @Published var autoTempEnabled: Bool {
+        didSet { defaults.set(autoTempEnabled, forKey: Keys.autoTempEnabled) }
+    }
+    @Published var autoTempDisableThreshold: Double {
+        didSet {
+            let clamped = max(85.0, min(100.0, autoTempDisableThreshold))
+            if clamped != autoTempDisableThreshold {
+                autoTempDisableThreshold = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.autoTempDisableThreshold)
+            if !autoTempAdvanced {
+                autoTempEnableThreshold = clamped - 10.0
+            } else if autoTempEnableThreshold > clamped - 10.0 {
+                autoTempEnableThreshold = clamped - 10.0
+            }
+        }
+    }
+    @Published var autoTempEnableThreshold: Double {
+        didSet {
+            let maxAllowed = autoTempDisableThreshold - 10.0
+            let clamped = max(50.0, min(maxAllowed, autoTempEnableThreshold))
+            if clamped != autoTempEnableThreshold {
+                autoTempEnableThreshold = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.autoTempEnableThreshold)
+        }
+    }
+    @Published var autoTempAdvanced: Bool {
+        didSet {
+            defaults.set(autoTempAdvanced, forKey: Keys.autoTempAdvanced)
+            if !autoTempAdvanced {
+                autoTempEnableThreshold = autoTempDisableThreshold - 10.0
+            }
+        }
+    }
+    
+    @Published var autoBatteryEnabled: Bool {
+        didSet { defaults.set(autoBatteryEnabled, forKey: Keys.autoBatteryEnabled) }
+    }
+    @Published var autoBatteryDisableThreshold: Double {
+        didSet {
+            let clamped = max(10.0, min(30.0, autoBatteryDisableThreshold))
+            if clamped != autoBatteryDisableThreshold {
+                autoBatteryDisableThreshold = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.autoBatteryDisableThreshold)
+            if !autoBatteryAdvanced {
+                autoBatteryEnableThreshold = clamped + 10.0
+            } else if autoBatteryEnableThreshold < clamped + 10.0 {
+                autoBatteryEnableThreshold = clamped + 10.0
+            }
+        }
+    }
+    @Published var autoBatteryEnableThreshold: Double {
+        didSet {
+            let minAllowed = autoBatteryDisableThreshold + 10.0
+            let clamped = max(minAllowed, min(80.0, autoBatteryEnableThreshold))
+            if clamped != autoBatteryEnableThreshold {
+                autoBatteryEnableThreshold = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.autoBatteryEnableThreshold)
+        }
+    }
+    @Published var autoBatteryAdvanced: Bool {
+        didSet {
+            defaults.set(autoBatteryAdvanced, forKey: Keys.autoBatteryAdvanced)
+            if !autoBatteryAdvanced {
+                autoBatteryEnableThreshold = autoBatteryDisableThreshold + 10.0
+            }
+        }
+    }
+    
+    @Published var appTurboRules: [String: AppTurboRule] {
+        didSet {
+            if let data = try? JSONEncoder().encode(appTurboRules) {
+                defaults.set(data, forKey: Keys.appTurboRules)
+            }
+        }
+    }
+    
+    var isPowerAutomationActive: Bool {
+        onACPowerAction != .keep || onBatteryPowerAction != .keep
+    }
+    
+    @Published var theme: AppTheme {
+        didSet {
+            defaults.set(theme.rawValue, forKey: Keys.theme)
+            NotificationCenter.default.post(name: .appThemeChanged, object: nil)
+        }
     }
     
     @Published var language: AppLanguage {
@@ -153,6 +390,13 @@ final class AppSettings: ObservableObject {
     }
     
     private init() {
+        if let savedTheme = defaults.string(forKey: Keys.theme),
+           let parsedTheme = AppTheme(rawValue: savedTheme) {
+            self.theme = parsedTheme
+        } else {
+            self.theme = .auto
+        }
+        
         if let savedLang = defaults.string(forKey: Keys.language),
            let lang = AppLanguage(rawValue: savedLang) {
             self.language = lang
@@ -180,10 +424,51 @@ final class AppSettings: ObservableObject {
         } else {
             self.showTempInMenuBar = true
         }
+        
+        if let acRaw = defaults.string(forKey: Keys.onACPowerAction),
+           let ac = PowerTurboAction(rawValue: acRaw) {
+            self.onACPowerAction = ac
+        } else {
+            self.onACPowerAction = .keep
+        }
+        
+        if let battRaw = defaults.string(forKey: Keys.onBatteryPowerAction),
+           let batt = PowerTurboAction(rawValue: battRaw) {
+            self.onBatteryPowerAction = batt
+        } else {
+            self.onBatteryPowerAction = .keep
+        }
+        
+        self.allowTurboOnLowBatteryWhenPluggedIn = defaults.bool(forKey: Keys.allowTurboOnLowBatteryWhenPluggedIn)
+        self.autoTempEnabled = defaults.bool(forKey: Keys.autoTempEnabled)
+        let savedTempDisable = defaults.double(forKey: Keys.autoTempDisableThreshold)
+        let initTempDisable = (savedTempDisable >= 85.0 && savedTempDisable <= 100.0) ? savedTempDisable : 90.0
+        self.autoTempDisableThreshold = initTempDisable
+        let savedTempEnable = defaults.double(forKey: Keys.autoTempEnableThreshold)
+        let initTempEnable = (savedTempEnable >= 50.0 && savedTempEnable <= initTempDisable - 10.0) ? savedTempEnable : (initTempDisable - 10.0)
+        self.autoTempEnableThreshold = initTempEnable
+        self.autoTempAdvanced = defaults.bool(forKey: Keys.autoTempAdvanced)
+        
+        self.autoBatteryEnabled = defaults.bool(forKey: Keys.autoBatteryEnabled)
+        let savedBattDisable = defaults.double(forKey: Keys.autoBatteryDisableThreshold)
+        let initBattDisable = (savedBattDisable >= 10.0 && savedBattDisable <= 30.0) ? savedBattDisable : 20.0
+        self.autoBatteryDisableThreshold = initBattDisable
+        let savedBattEnable = defaults.double(forKey: Keys.autoBatteryEnableThreshold)
+        let initBattEnable = (savedBattEnable >= initBattDisable + 10.0 && savedBattEnable <= 80.0) ? savedBattEnable : (initBattDisable + 10.0)
+        self.autoBatteryEnableThreshold = initBattEnable
+        self.autoBatteryAdvanced = defaults.bool(forKey: Keys.autoBatteryAdvanced)
+        
+        if let data = defaults.data(forKey: Keys.appTurboRules),
+           let decoded = try? JSONDecoder().decode([String: AppTurboRule].self, from: data) {
+            self.appTurboRules = decoded
+        } else {
+            self.appTurboRules = [:]
+        }
     }
 }
 
 extension Notification.Name {
     static let updateIntervalChanged = Notification.Name("updateIntervalChanged")
     static let menuBarDisplayChanged = Notification.Name("menuBarDisplayChanged")
+    static let appThemeChanged = Notification.Name("appThemeChanged")
 }

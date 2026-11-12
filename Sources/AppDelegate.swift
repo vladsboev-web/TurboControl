@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 import Combine
+import QuartzCore
 
 private final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -13,6 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
+    private var isPanelOpen = false
     
     private lazy var leafIcon: NSImage? = {
         let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
@@ -30,8 +32,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         // Setup floating panel (immune to fullscreen menu bar auto-hide clipping)
-        let panelWidth: CGFloat = 334
-        let panelHeight: CGFloat = 456
+        let panelWidth: CGFloat = 360
+        let panelHeight: CGFloat = 504
         let panel = FloatingPanel(
             contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -49,10 +51,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingView = NSHostingView(rootView: MainPopoverView())
         hostingView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
         hostingView.wantsLayer = true
-        hostingView.layer?.cornerRadius = 12
+        hostingView.layer?.cornerRadius = 16
         hostingView.layer?.masksToBounds = true
         panel.contentView = hostingView
         self.panel = panel
+        applyPanelAppearance()
         
         // Setup status item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -65,12 +68,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Setup event monitors for outside clicks and Escape key
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            guard let self = self, self.panel.isVisible else { return }
+            guard let self = self, self.isPanelOpen else { return }
             self.closePopover(sender: event)
         }
         
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self = self, self.panel.isVisible else { return event }
+            guard let self = self, self.isPanelOpen else { return event }
             if event.keyCode == 53 { // Escape
                 self.closePopover(sender: nil)
                 return nil
@@ -80,7 +83,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification, object: panel)
             .sink { [weak self] _ in
-                self?.closePopover(sender: nil)
+                guard let self = self, self.isPanelOpen else { return }
+                if let buttonWindow = self.statusItem.button?.window,
+                   let event = NSApp.currentEvent,
+                   event.window == buttonWindow,
+                   (event.type == .leftMouseDown || event.type == .leftMouseUp) {
+                    return
+                }
+                self.closePopover(sender: nil)
             }
             .store(in: &cancellables)
         
@@ -96,6 +106,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateStatusItemDisplay()
             }
             .store(in: &cancellables)
+        
+        NotificationCenter.default.publisher(for: .appThemeChanged)
+            .sink { [weak self] _ in
+                self?.applyPanelAppearance()
+            }
+            .store(in: &cancellables)
+        
+        // Initialize automation service
+        _ = AutomationService.shared
         
         TurboBoostService.shared.$isTurboDisabled
             .receive(on: RunLoop.main)
@@ -149,7 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         if event.type == .rightMouseUp || (event.type == .leftMouseUp && event.modifierFlags.contains(.control)) {
-            if panel.isVisible {
+            if isPanelOpen {
                 closePopover(sender: sender)
             }
             showContextMenu()
@@ -200,8 +219,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
     
+    private func applyPanelAppearance() {
+        let appearance: NSAppearance?
+        switch AppSettings.shared.theme {
+        case .auto:
+            appearance = nil
+        case .light:
+            appearance = NSAppearance(named: .aqua)
+        case .dark:
+            appearance = NSAppearance(named: .darkAqua)
+        }
+        panel.appearance = appearance
+    }
+    
     @objc func togglePopover(_ sender: AnyObject?) {
-        if panel.isVisible {
+        if isPanelOpen {
             closePopover(sender: sender)
         } else {
             showPopover(sender: sender)
@@ -210,6 +242,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func showPopover(sender: AnyObject?) {
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
+        NotificationCenter.default.post(name: .resetToMainTab, object: nil)
+        isPanelOpen = true
         SystemMonitor.shared.isPopoverVisible = true
         SystemMonitor.shared.updateMetrics()
         TurboBoostService.shared.refreshStatus()
@@ -231,13 +265,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         
-        panel.setFrameOrigin(NSPoint(x: originX, y: originY))
+        let targetOrigin = NSPoint(x: originX, y: originY)
+        panel.alphaValue = 0.0
+        panel.setFrameOrigin(targetOrigin)
         panel.makeKeyAndOrderFront(nil)
+        
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.20
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0)
+            panel.animator().alphaValue = 1.0
+        }
     }
     
     func closePopover(sender: AnyObject?) {
+        guard isPanelOpen else { return }
+        isPanelOpen = false
         SystemMonitor.shared.isPopoverVisible = false
-        panel.orderOut(sender)
+        
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0.0, 1.0, 1.0)
+            panel.animator().alphaValue = 0.0
+        }, completionHandler: { [weak self] in
+            guard let self = self, !self.isPanelOpen else { return }
+            self.panel.orderOut(nil)
+            self.panel.alphaValue = 1.0
+        })
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {
@@ -249,4 +302,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         FanControlService.shared.resetToAppleAuto()
     }
+}
+
+extension Notification.Name {
+    static let resetToMainTab = Notification.Name("resetToMainTab")
 }

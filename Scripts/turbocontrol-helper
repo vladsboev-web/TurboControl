@@ -102,8 +102,43 @@ case "$1" in
                 ;;
         esac
         ;;
+    cpu_freq)
+        /usr/bin/powermetrics --samplers cpu_power -n 1 -i 150 2>/dev/null | /usr/bin/awk -F: '
+            /System Average frequency as fraction of nominal/ {
+                if (match($0, /\([0-9]+(\.[0-9]+)? [Mm][Hh][Zz]\)/)) {
+                    s = substr($0, RSTART + 1, RLENGTH - 2)
+                    sub(/ [Mm][Hh][Zz]/, "", s)
+                    print s
+                    found = 1
+                    exit
+                }
+                if (match($2, /[0-9]+(\.[0-9]+)?/)) {
+                    pct = substr($2, RSTART, RLENGTH) + 0
+                }
+            }
+            /CPU Average frequency as fraction of nominal/ {
+                if (pct == 0 && match($2, /[0-9]+(\.[0-9]+)?/)) {
+                    pct = substr($2, RSTART, RLENGTH) + 0
+                }
+            }
+            /CPU [0-9]+ frequency|HW active frequency|CPU frequency/ {
+                if (match($2, /[0-9]+(\.[0-9]+)?/)) {
+                    val = substr($2, RSTART, RLENGTH) + 0
+                    if ($0 ~ /GHz/) val = val * 1000
+                    print val
+                    found = 1
+                    exit
+                }
+            }
+            END {
+                if (!found && pct > 0) {
+                    print "PCT:" pct
+                }
+            }'
+        exit 0
+        ;;
     *)
-        echo "Usage: $0 {status|disable|enable|fan [auto|manual <rpm>]}"
+        echo "Usage: $0 {status|disable|enable|fan [auto|manual <rpm>]|cpu_freq}"
         exit 1
         ;;
 esac

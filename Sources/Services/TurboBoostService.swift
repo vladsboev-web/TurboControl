@@ -7,6 +7,7 @@ final class TurboBoostService: ObservableObject {
     @Published var isTurboDisabled: Bool = false
     @Published var isWorking: Bool = false
     @Published var isHelperConfigured: Bool = false
+    @Published var isHelperOutdated: Bool = false
     @Published var statusMessage: String?
     
     private let helperPath = "/usr/local/bin/turbocontrol-helper"
@@ -21,8 +22,16 @@ final class TurboBoostService: ObservableObject {
     
     func checkHelperInstalled() {
         let installed = FileManager.default.isExecutableFile(atPath: helperPath)
+        var outdated = false
+        if installed,
+           let bundledHelper = Bundle.main.path(forResource: "turbocontrol-helper", ofType: nil),
+           let bundledData = try? Data(contentsOf: URL(fileURLWithPath: bundledHelper)),
+           let installedData = try? Data(contentsOf: URL(fileURLWithPath: helperPath)) {
+            outdated = (bundledData != installedData)
+        }
         DispatchQueue.main.async {
             self.isHelperConfigured = installed
+            self.isHelperOutdated = outdated
         }
     }
     

@@ -82,11 +82,70 @@ enum FanScale {
     }
 }
 
+struct SpringButtonStyle: ButtonStyle {
+    var pressedScale: CGFloat = 0.96
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? pressedScale : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.72), value: configuration.isPressed)
+    }
+}
+
+struct GlassCardModifier: ViewModifier {
+    var cornerRadius: CGFloat = 12
+    
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.42))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.24), Color.primary.opacity(0.07)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1
+                            )
+                    )
+            )
+    }
+}
+
+extension View {
+    func glassCard(cornerRadius: CGFloat = 12) -> some View {
+        modifier(GlassCardModifier(cornerRadius: cornerRadius))
+    }
+}
+
+struct IconBadge: View {
+    let systemName: String
+    let color: Color
+    var size: CGFloat = 28
+    var iconSize: CGFloat = 14
+    
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+                .fill(color.opacity(0.16))
+            Image(systemName: systemName)
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundColor(color)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 struct MetricCardView: View {
     let title: String
     let icon: String
     let iconColor: Color
     let temperature: Double?
+    var frequencyGHz: Double? = nil
     let loadPercentage: Double?
     let loadTitle: String? // "Нагрузка CPU:" / "Нагрузка GPU:"
     let customValue: String?
@@ -95,34 +154,49 @@ struct MetricCardView: View {
     let progressColor: Color
     
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 8) {
             // Header row
             HStack(alignment: .center) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(iconColor)
-                        .frame(width: 16, height: 16)
+                HStack(spacing: 8) {
+                    IconBadge(systemName: icon, color: iconColor)
                     
                     Text(title)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 13.5, weight: .semibold))
                         .foregroundColor(.primary)
                 }
                 
                 Spacer()
                 
+                if let freq = frequencyGHz {
+                    Text(String(format: "%.2f GHz", freq))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(iconColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2.5)
+                        .background(
+                            Capsule()
+                                .fill(iconColor.opacity(0.12))
+                        )
+                        .animation(nil, value: freq)
+                }
+                
                 if let temp = temperature {
                     Text(String(format: "%.0f°C", temp))
-                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(ThermalScale.color(for: temp))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2.5)
+                        .background(
+                            Capsule()
+                                .fill(ThermalScale.color(for: temp).opacity(0.14))
+                        )
                         .animation(nil, value: temp)
                 } else if let val = customValue {
                     Text(val)
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundColor(.primary)
                 }
             }
-            .frame(height: 16)
             
             // Horizontal Progress Bar with dynamic calibrated fill
             HorizontalProgressBar(progress: progress, color: progressColor)
@@ -132,33 +206,25 @@ struct MetricCardView: View {
             HStack(alignment: .center) {
                 if let load = loadPercentage {
                     Text(loadTitle ?? L10n.defaultLoadTitle)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text(String(format: "%5.1f%%", load))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    Text(String(format: "%.1f%%", load))
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundColor(load > 80 ? ThermalScale.hotColor : .secondary)
                         .animation(nil, value: load)
                 } else if let sub = customSubtitle {
                     Text(sub)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()
                 }
             }
-            .frame(height: 14)
+            .frame(height: 15)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(height: 68)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(NSColor.controlBackgroundColor).opacity(0.75))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .glassCard(cornerRadius: 12)
     }
 }
 
@@ -172,20 +238,25 @@ struct HorizontalProgressBar: View {
             ZStack(alignment: .leading) {
                 // Background Track
                 Capsule()
-                    .fill(Color.primary.opacity(0.12))
+                    .fill(Color.primary.opacity(0.09))
                     .frame(width: geo.size.width, height: 6)
                 
                 // Foreground Fill
                 Capsule()
-                    .fill(color)
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0.75), color],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
                     .frame(width: max(6, geo.size.width * clamped), height: 6)
+                    .shadow(color: color.opacity(0.30), radius: 3, x: 0, y: 0)
                     .opacity(clamped > 0.005 ? 1.0 : 0.0)
                     .animation(.easeOut(duration: 0.25), value: clamped)
             }
             .frame(width: geo.size.width, height: 6, alignment: .leading)
-            .clipped()
         }
         .frame(height: 6)
-        .drawingGroup()
     }
 }

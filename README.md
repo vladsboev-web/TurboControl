@@ -20,9 +20,14 @@
   - `Умный (Ранний)` — плавный ранний обдув с 50–55°C, удерживающий ноутбук холодным (< 75°C) до начала троттлинга.
   - `Макс` — максимальная продувка (7200 RPM).
   - `Ручной` — точная настройка оборотов ползунком (1200–7200 RPM).
-- **Мониторинг в реальном времени:** Температура (°C) и загрузка (%) процессора (CPU) и графики (GPU) с адаптивной контрастной цветовой шкалой.
-- **Работа без пароля:** Пароль администратора вводится **только один раз** при установке. Дальше переключение Turbo Boost и кулера работает мгновенно и без запросов пароля.
-- **Два языка интерфейса (RU / EN):** Переключение между русским и английским языком прямо в шапке окна (кнопка `RU`/`EN`) или в настройках.
+- **Мониторинг в реальном времени:** Температура (°C), загрузка (%) и **текущая частота CPU (GHz)** (через `powermetrics` / `sysctl`), а также температура и нагрузка GPU с адаптивной цветовой шкалой.
+- **Автоматизация Turbo Boost (в Настройках):**
+  - **По питанию:** отдельные правила при подключении зарядки («Включать / Не менять») и работе от аккумулятора («Выключать / Не менять»), плюс опция включения на низком заряде при подключении к сети.
+  - **По температуре CPU:** отключение Turbo Boost при нагреве (85–100°C) и обратное включение при остывании (с минимальным гистерезисом 10°C, настраивается в расширенном режиме).
+  - **По уровню заряда:** отключение при низком заряде (10–30%) и включение при зарядке (с минимальным зазором 10%).
+- **Вкладка «Кто греет Mac?» (Топ-5 процессов):** Показывает 5 самых нагруженных пользовательских приложений (без системных демонов) с сортировкой по `CPU %`, `GPU` или `Энергии`, кнопкой завершения процесса и правилом `⚡ Авто / Выкл / Вкл` для активного окна.
+- **Современный интерфейс и темы:** Полупрозрачный стиль, плавное fade-появление окна, переключатель темы (`Авто / Светлая / Тёмная` с автовыбором при установке) и два языка (`RU / EN`).
+- **Работа без пароля и автопроверка хелпера:** Пароль администратора вводится **только один раз** при установке (поддерживаются как аккаунты администратора, так и обычные аккаунты). При обновлении приложения до новой версии утилита сама проверяет актуальность системного хелпера и предлагает обновить его в 1 клик.
 - **Полноэкранный режим без обрезания окна:** Специальная плавающая панель не уезжает за край экрана, когда в полноэкранном режиме прячется верхнее меню macOS.
 
 ---
@@ -95,9 +100,14 @@ sudo rm -rf /Applications/TurboControl.app /usr/local/bin/turbocontrol-helper /u
   - `Smart (Early)` — Proactive cooling starting at 50–55°C to keep temperatures below 75°C before thermal throttling occurs.
   - `Max` — Full blast at 7200 RPM.
   - `Manual` — Custom target RPM via slider (1200–7200 RPM).
-- **Real-Time Sensor Monitoring:** Live CPU & GPU temperatures (°C) and utilization (%) with high-contrast adaptive color indicators for both Light and Dark macOS themes.
-- **Passwordless Operation:** You only enter your administrator password **once** during installation. All future Turbo Boost and fan adjustments happen instantly with zero password prompts.
-- **Bilingual UI (EN / RU):** Switch between English and Russian anytime using the `RU`/`EN` pill in the header or inside Settings.
+- **Real-Time Sensor Monitoring:** Live CPU & GPU temperatures (°C), utilization (%), and **real-time CPU frequency (GHz)** via `powermetrics` / `sysctl` with adaptive high-contrast color indicators.
+- **Turbo Boost Automation (in Settings):**
+  - **Power Source Rules:** Independent actions on charger (`Enable / Keep`) and on battery (`Disable / Keep`), plus an option to allow Turbo on low battery when plugged in.
+  - **CPU Temperature Rules:** Disable Turbo Boost when heating up (85–100°C) and re-enable on cooldown (with a mandatory ≥10°C hysteresis gap in Advanced mode).
+  - **Battery Level Rules:** Disable on low battery (10–30%) and re-enable when charged (with a ≥10% hysteresis gap).
+- **"Who's heating Mac?" Tab (Top-5 Processes):** Displays the top 5 user applications (filtering out macOS system daemons) sorted by `CPU %`, `GPU`, or `Energy`, with one-click Quit and per-app `⚡ Auto / Off / On` Turbo rules when active.
+- **Modern UI & Themes:** Translucent glass design, smooth fade window transitions, theme switcher (`Auto / Light / Dark`, defaulting to `Auto` on install), and bilingual UI (`EN / RU`).
+- **Passwordless Operation & Helper Version Check:** Admin password is entered **only once** during installation (supports both Admin and Standard macOS accounts). When the app is updated, it automatically detects if `/usr/local/bin/turbocontrol-helper` is outdated and offers a one-click update prompt.
 - **Fullscreen-Safe Floating Window:** Never gets clipped at the top of the screen when the macOS Menu Bar auto-hides in fullscreen apps.
 
 ---
@@ -137,23 +147,33 @@ Disabling Intel Turbo Boost requires toggling the `MSR_IA32_MISC_ENABLE` CPU reg
   2. Scroll down to the Security section and click **Allow**.
   3. Restart your Mac if prompted — after that, Turbo Boost will toggle seamlessly in one click.
 
-### 🛠 Manual Build & Project Structure
+### 🛠 Manual Build, Deploy & Project Structure
 ```text
 TurboControl/
 ├── Install TurboControl.command  # Double-click installer for beginners
 ├── install.sh                    # CLI build & installation script
 ├── Resources/                    # AppIcon.icns, Info.plist, DisableTurboBoost.kext
-├── Scripts/                      # Build script & privileged helper setup
+├── Scripts/                      # Build, deploy & privileged helper scripts
 └── Sources/
     ├── Bridge/                   # IOKit AppleSMC C bridge & fan writer
     ├── Models/                   # AppSettings, localization (RU/EN), SystemMetrics
-    ├── Services/                 # SMCReader, UsageReader, TurboBoostService, FanControlService
-    └── Views/                    # SwiftUI views & custom floating panel
+    ├── Services/                 # SMCReader, UsageReader, TurboBoostService, FanControlService, AutomationService, ProcessMonitorService
+    └── Views/                    # SwiftUI views (MainPopoverView, HeavyProcessesView, SettingsView, etc.)
 ```
 
 To build `.app` bundle manually without installing:
 ```bash
 ./Scripts/build_app.sh
+```
+
+To rebuild, deploy to `/Applications/TurboControl.app`, and restart the app:
+```bash
+./Scripts/rebuild_and_deploy.sh
+```
+
+If `/usr/local/bin/turbocontrol-helper` was updated (for example, after adding new helper commands like `cpu_freq`), either click **Update** on the in-app banner or run once:
+```bash
+sudo /Applications/TurboControl.app/Contents/Resources/setup_helper.sh
 ```
 
 ### 🗑 Uninstall

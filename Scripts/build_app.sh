@@ -41,9 +41,12 @@ swiftc -O \
     "$PROJECT_DIR/Sources/Services/UsageReader.swift" \
     "$PROJECT_DIR/Sources/Services/TurboBoostService.swift" \
     "$PROJECT_DIR/Sources/Services/FanControlService.swift" \
+    "$PROJECT_DIR/Sources/Services/AutomationService.swift" \
+    "$PROJECT_DIR/Sources/Services/ProcessMonitorService.swift" \
     "$PROJECT_DIR/Sources/Views/MetricCardView.swift" \
     "$PROJECT_DIR/Sources/Views/FanControlCardView.swift" \
     "$PROJECT_DIR/Sources/Views/SettingsView.swift" \
+    "$PROJECT_DIR/Sources/Views/HeavyProcessesView.swift" \
     "$PROJECT_DIR/Sources/Views/MainPopoverView.swift" \
     "$BUILD_DIR/SMCBridge.o" \
     -framework Cocoa \

@@ -12,6 +12,7 @@ final class SystemMonitor: ObservableObject {
     
     @Published var cpuLoad: Double = 0.0
     @Published var gpuLoad: Double = 0.0
+    @Published var cpuFrequencyGHz: Double = 0.0
     
     var isPopoverVisible: Bool = false
     
@@ -60,6 +61,7 @@ final class SystemMonitor: ObservableObject {
             let fan = self.smc.getFanRPM()
             let cpuL = shouldReadLoad ? self.usage.getCPULoad() : self.cpuLoad
             let gpuL = shouldReadLoad ? self.usage.getGPULoad() : self.gpuLoad
+            let cpuFreq = shouldReadLoad ? self.usage.getCPUFrequencyGHz() : self.cpuFrequencyGHz
             
             DispatchQueue.main.async {
                 self.cpuTemp = cpuT
@@ -68,9 +70,13 @@ final class SystemMonitor: ObservableObject {
                 if shouldReadLoad {
                     self.cpuLoad = cpuL
                     self.gpuLoad = gpuL
+                    if cpuFreq > 0 {
+                        self.cpuFrequencyGHz = cpuFreq
+                    }
                 }
                 
                 NotificationCenter.default.post(name: .metricsDidUpdate, object: nil)
+                NotificationCenter.default.post(name: .cpuTempDidUpdateForAutomation, object: nil, userInfo: ["temp": cpuT])
             }
         }
     }
@@ -90,4 +96,5 @@ final class SystemMonitor: ObservableObject {
 
 extension Notification.Name {
     static let metricsDidUpdate = Notification.Name("metricsDidUpdate")
+    static let cpuTempDidUpdateForAutomation = Notification.Name("cpuTempDidUpdateForAutomation")
 }
