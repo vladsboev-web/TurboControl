@@ -30,3 +30,7 @@ xcuserdata/
 HabrArticle/
 docs_local/
 
+# Local tests
+Tests/
+Scripts/run_tests.sh
+
