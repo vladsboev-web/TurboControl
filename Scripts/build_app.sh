@@ -6,27 +6,37 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/build"
 APP_DIR="$BUILD_DIR/TurboControl.app"
 
-echo "==> Building TurboControl for macOS (x86_64)..."
+echo "==> Building TurboControl for macOS (Universal: x86_64 + arm64)..."
 
 mkdir -p "$BUILD_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-# 1. Compile C SMCBridge
+# 1. Compile C SMCBridge (x86_64 + arm64)
 echo "--> Compiling SMCBridge.c..."
 clang -O2 -target x86_64-apple-macos12.0 -c "$PROJECT_DIR/Sources/Bridge/SMCBridge.c" \
-    -o "$BUILD_DIR/SMCBridge.o" \
+    -o "$BUILD_DIR/SMCBridge_x86_64.o" \
+    -I "$PROJECT_DIR/Sources/Bridge"
+clang -O2 -target arm64-apple-macos12.0 -c "$PROJECT_DIR/Sources/Bridge/SMCBridge.c" \
+    -o "$BUILD_DIR/SMCBridge_arm64.o" \
     -I "$PROJECT_DIR/Sources/Bridge"
 
-# 2. Compile turbocontrol-fan binary
+# 2. Compile turbocontrol-fan binary (Universal: x86_64 + arm64)
 echo "--> Compiling turbocontrol-fan..."
 clang -O2 -target x86_64-apple-macos12.0 "$PROJECT_DIR/Sources/Bridge/smc_fan_writer.c" \
-    -o "$BUILD_DIR/turbocontrol-fan" \
+    -o "$BUILD_DIR/turbocontrol-fan_x86_64" \
     -framework IOKit
+clang -O2 -target arm64-apple-macos12.0 "$PROJECT_DIR/Sources/Bridge/smc_fan_writer.c" \
+    -o "$BUILD_DIR/turbocontrol-fan_arm64" \
+    -framework IOKit
+lipo -create \
+    "$BUILD_DIR/turbocontrol-fan_x86_64" \
+    "$BUILD_DIR/turbocontrol-fan_arm64" \
+    -output "$BUILD_DIR/turbocontrol-fan"
 chmod +x "$BUILD_DIR/turbocontrol-fan"
 
-# 3. Compile Swift Sources
+# 3. Compile Swift Sources (Universal: x86_64 + arm64)
 echo "--> Compiling Swift sources..."
 SWIFT_SOURCES=()
 while IFS= read -r -d '' file; do
@@ -38,12 +48,30 @@ swiftc -O \
     -import-objc-header "$PROJECT_DIR/Sources/Bridge/TurboControl-Bridging-Header.h" \
     -I "$PROJECT_DIR/Sources/Bridge" \
     "${SWIFT_SOURCES[@]}" \
-    "$BUILD_DIR/SMCBridge.o" \
+    "$BUILD_DIR/SMCBridge_x86_64.o" \
     -framework Cocoa \
     -framework SwiftUI \
     -framework IOKit \
     -framework ServiceManagement \
-    -o "$APP_DIR/Contents/MacOS/TurboControl"
+    -o "$BUILD_DIR/TurboControl_x86_64"
+
+swiftc -O \
+    -target arm64-apple-macos12.0 \
+    -import-objc-header "$PROJECT_DIR/Sources/Bridge/TurboControl-Bridging-Header.h" \
+    -I "$PROJECT_DIR/Sources/Bridge" \
+    "${SWIFT_SOURCES[@]}" \
+    "$BUILD_DIR/SMCBridge_arm64.o" \
+    -framework Cocoa \
+    -framework SwiftUI \
+    -framework IOKit \
+    -framework ServiceManagement \
+    -o "$BUILD_DIR/TurboControl_arm64"
+
+lipo -create \
+    "$BUILD_DIR/TurboControl_x86_64" \
+    "$BUILD_DIR/TurboControl_arm64" \
+    -output "$APP_DIR/Contents/MacOS/TurboControl"
+chmod +x "$APP_DIR/Contents/MacOS/TurboControl"
 
 # 4. Copy Bundle Resources
 echo "--> Copying Info.plist and resources..."
