@@ -7,8 +7,19 @@ echo "=========================================="
 echo "      TurboControl Installation           "
 echo "=========================================="
 
-# 1. Stop running instance if any
-pkill -9 -f "TurboControl" 2>/dev/null || true
+# 1. Gracefully stop running instance if any (allows SMC reset to Apple Auto via applicationWillTerminate)
+if pgrep -x "TurboControl" >/dev/null 2>&1; then
+    osascript -e 'quit app "TurboControl"' 2>/dev/null || true
+    for _ in {1..20}; do
+        if ! pgrep -x "TurboControl" >/dev/null 2>&1; then break; fi
+        sleep 0.1
+    done
+    if pgrep -x "TurboControl" >/dev/null 2>&1; then
+        pkill -x "TurboControl" 2>/dev/null || true
+        sleep 0.5
+        pkill -9 -x "TurboControl" 2>/dev/null || true
+    fi
+fi
 
 # 2. Build
 "$DIR/Scripts/build_app.sh"

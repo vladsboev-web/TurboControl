@@ -42,11 +42,11 @@ final class FanControlService: ObservableObject {
         }
     }
     
-    private let helperPath = "/usr/local/bin/turbocontrol-helper"
     private let fanQueue = DispatchQueue(label: "com.turbocontrol.fanQueue", qos: .userInitiated)
     private var lastAppliedRPM: Int = -1
     private var smoothedTemp: Double = 0.0
     private var smartIdleAutoActive: Bool = false
+    private var lastFailureTime: Date = .distantPast
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
@@ -78,16 +78,13 @@ final class FanControlService: ObservableObject {
             .store(in: &cancellables)
     }
     
-    deinit {
-        setFanAuto(waitUntilDone: false)
-    }
-    
     func resetToAppleAuto() {
         setFanAuto(waitUntilDone: true)
     }
     
     private func handleMetricsUpdate() {
-        let smcManual = SMCReader.shared.isFanManualMode()
+        guard Date().timeIntervalSince(lastFailureTime) >= 10.0 else { return }
+        let smcManual = SystemMonitor.shared.isFanManualMode
         
         switch currentMode {
         case .auto:
@@ -146,7 +143,7 @@ final class FanControlService: ObservableObject {
             return
         }
         
-        var targetRPM = calculateSmartRPM(temp: smoothedTemp)
+        var targetRPM = Self.calculateSmartRPM(temp: smoothedTemp)
         
         // Never spin down abruptly while cooling down: cap RPM drop to at most 350 RPM per poll cycle
         if lastAppliedRPM > 0 && targetRPM < lastAppliedRPM {
@@ -159,7 +156,7 @@ final class FanControlService: ObservableObject {
         }
     }
     
-    private func calculateSmartRPM(temp: Double) -> Int {
+    static func calculateSmartRPM(temp: Double) -> Int {
         // Smart early cooling curve (active from 55°C):
         // 52°C - 55°C -> 1500 - 2000 RPM (gentle transition from silent)
         // 55°C - 65°C -> 2000 - 3600 RPM (early ramp-up before heat builds up)
@@ -207,35 +204,40 @@ final class FanControlService: ObservableObject {
     }
     
     private func setFanAuto(waitUntilDone: Bool) {
-        lastAppliedRPM = 0
-        let work = { [helperPath] in
-            guard FileManager.default.isExecutableFile(atPath: helperPath) else { return }
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            task.arguments = ["-n", helperPath, "fan", "auto"]
-            try? task.run()
-            task.waitUntilExit()
-            if !waitUntilDone {
-                SystemMonitor.shared.refreshFanRPMQuickly()
+        executeFanCommand(["fan", "auto"], appliedRPM: 0, waitUntilDone: waitUntilDone)
+    }
+    
+    private func setFanManual(rpm: Int) {
+        executeFanCommand(["fan", "manual", "\(rpm)"], appliedRPM: rpm, waitUntilDone: false)
+    }
+    
+    private func executeFanCommand(_ arguments: [String], appliedRPM: Int, waitUntilDone: Bool) {
+        let work = { [weak self] in
+            let result = HelperClient.run(arguments, timeout: 10.0)
+            if waitUntilDone {
+                if result.succeeded {
+                    self?.lastAppliedRPM = appliedRPM
+                    self?.lastFailureTime = .distantPast
+                } else {
+                    self?.lastFailureTime = Date()
+                }
+            } else {
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if result.succeeded {
+                        self.lastAppliedRPM = appliedRPM
+                        self.lastFailureTime = .distantPast
+                        SystemMonitor.shared.refreshFanRPMQuickly()
+                    } else {
+                        self.lastFailureTime = Date()
+                    }
+                }
             }
         }
         if waitUntilDone {
             fanQueue.sync(execute: work)
         } else {
             fanQueue.async(execute: work)
-        }
-    }
-    
-    private func setFanManual(rpm: Int) {
-        lastAppliedRPM = rpm
-        fanQueue.async { [helperPath] in
-            guard FileManager.default.isExecutableFile(atPath: helperPath) else { return }
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            task.arguments = ["-n", helperPath, "fan", "manual", "\(rpm)"]
-            try? task.run()
-            task.waitUntilExit()
-            SystemMonitor.shared.refreshFanRPMQuickly()
         }
     }
 }

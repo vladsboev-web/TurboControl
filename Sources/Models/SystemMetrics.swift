@@ -13,6 +13,7 @@ final class SystemMonitor: ObservableObject {
     @Published var cpuLoad: Double = 0.0
     @Published var gpuLoad: Double = 0.0
     @Published var cpuFrequencyGHz: Double = 0.0
+    @Published var isFanManualMode: Bool = false
     
     var isPopoverVisible: Bool = false
     
@@ -21,6 +22,7 @@ final class SystemMonitor: ObservableObject {
     private let pollQueue = DispatchQueue(label: "com.turbocontrol.pollQueue", qos: .utility)
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    private var lastFreqCheckTime: Date = .distantPast
     
     private init() {
         fanMinRPM = smc.getFanMinRPM()
@@ -59,14 +61,24 @@ final class SystemMonitor: ObservableObject {
             let cpuT = self.smc.getCPUTemperature()
             let gpuT = self.smc.getGPUTemperature()
             let fan = self.smc.getFanRPM()
+            let fanManual = self.smc.isFanManualMode()
             let cpuL = shouldReadLoad ? self.usage.getCPULoad() : self.cpuLoad
             let gpuL = shouldReadLoad ? self.usage.getGPULoad() : self.gpuLoad
-            let cpuFreq = shouldReadLoad ? self.usage.getCPUFrequencyGHz() : self.cpuFrequencyGHz
+            
+            var cpuFreq = self.cpuFrequencyGHz
+            if shouldReadLoad {
+                let now = Date()
+                if now.timeIntervalSince(self.lastFreqCheckTime) >= 4.0 || cpuFreq <= 0 {
+                    self.lastFreqCheckTime = now
+                    cpuFreq = self.usage.getCPUFrequencyGHz()
+                }
+            }
             
             DispatchQueue.main.async {
                 self.cpuTemp = cpuT
                 self.gpuTemp = gpuT
                 self.fanRPM = fan
+                self.isFanManualMode = fanManual
                 if shouldReadLoad {
                     self.cpuLoad = cpuL
                     self.gpuLoad = gpuL

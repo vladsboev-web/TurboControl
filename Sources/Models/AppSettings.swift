@@ -1,6 +1,27 @@
 import Foundation
 import Combine
 import SwiftUI
+import Darwin
+
+enum SystemCapabilities {
+    static let isIntelMac: Bool = {
+        #if arch(arm64)
+        return false
+        #else
+        var arm64: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname("hw.optional.arm64", &arm64, &size, nil, 0) == 0, arm64 == 1 {
+            return false
+        }
+        var translated: Int32 = 0
+        size = MemoryLayout<Int32>.size
+        if sysctlbyname("sysctl.proc_translated", &translated, &size, nil, 0) == 0, translated == 1 {
+            return false
+        }
+        return true
+        #endif
+    }()
+}
 
 enum AppTheme: String, CaseIterable {
     case auto = "auto"
@@ -212,6 +233,22 @@ enum L10n {
     // Helper Update Banner
     static var helperOutdatedTitle: String { isEn ? "System helper update required" : "Требуется обновить системный хелпер" }
     static var helperUpdateBtn: String { isEn ? "Update" : "Обновить" }
+    
+    // Apple Silicon Monitor-Only Alert
+    static var appleSiliconAlertTitle: String {
+        isEn ? "Apple Silicon Mac Detected" : "Обнаружен Mac на Apple Silicon"
+    }
+    static var appleSiliconAlertMessage: String {
+        isEn
+        ? "Intel Turbo Boost control is only supported on Intel-based Macs. You can continue in Monitor Only mode (Turbo Boost controls will be hidden)."
+        : "Управление Intel Turbo Boost поддерживается только на Mac с процессорами Intel. Вы можете продолжить в режиме «Только мониторинг» (элементы управления Turbo Boost будут скрыты)."
+    }
+    static var continueMonitorOnlyBtn: String {
+        isEn ? "Continue (Monitor Only)" : "Продолжить (только мониторинг)"
+    }
+    static var menuMonitorOnlyStatus: String {
+        isEn ? "Monitor Only (Apple Silicon)" : "Только мониторинг (Apple Silicon)"
+    }
 }
 
 final class AppSettings: ObservableObject {

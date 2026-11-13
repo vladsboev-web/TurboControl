@@ -68,15 +68,19 @@ brew install --cask vladsboev-web/tap/turbocontrol
   3. Перезагрузите Mac по запросу системы — после этого всё будет работать в один клик.
 
 ### 🗑 Удаление (Uninstall)
+Через скрипт деинсталляции из папки проекта:
+```bash
+./uninstall.sh
+```
 Если устанавливали через Homebrew:
 ```bash
 brew uninstall --cask turbocontrol
 ```
 Или вручную:
 ```bash
-pkill -f TurboControl
+pkill -x TurboControl
 sudo /sbin/kextunload -b com.rugarciap.DisableTurboBoost 2>/dev/null || true
-sudo rm -rf /Applications/TurboControl.app /usr/local/bin/turbocontrol-helper /usr/local/bin/turbocontrol-fan /etc/sudoers.d/turbocontrol /Library/Extensions/DisableTurboBoost.kext
+sudo rm -rf /Applications/TurboControl.app /Library/PrivilegedHelperTools/turbocontrol-helper /Library/PrivilegedHelperTools/turbocontrol-fan /usr/local/bin/turbocontrol-helper /usr/local/bin/turbocontrol-fan /etc/sudoers.d/turbocontrol /Library/Extensions/DisableTurboBoost.kext
 ```
 
 ### 📄 Лицензия
@@ -107,7 +111,7 @@ sudo rm -rf /Applications/TurboControl.app /usr/local/bin/turbocontrol-helper /u
   - **Battery Level Rules:** Disable on low battery (10–30%) and re-enable when charged (with a ≥10% hysteresis gap).
 - **"Who's heating Mac?" Tab (Top-5 Processes):** Displays the top 5 user applications (filtering out macOS system daemons) sorted by `CPU %`, `GPU`, or `Energy`, with one-click Quit and per-app `⚡ Auto / Off / On` Turbo rules when active.
 - **Modern UI & Themes:** Translucent glass design, smooth fade window transitions, theme switcher (`Auto / Light / Dark`, defaulting to `Auto` on install), and bilingual UI (`EN / RU`).
-- **Passwordless Operation & Helper Version Check:** Admin password is entered **only once** during installation (supports both Admin and Standard macOS accounts). When the app is updated, it automatically detects if `/usr/local/bin/turbocontrol-helper` is outdated and offers a one-click update prompt.
+- **Passwordless Operation & Helper Version Check:** Admin password is entered **only once** during installation (supports both Admin and Standard macOS accounts). When the app is updated, it automatically detects if `/Library/PrivilegedHelperTools/turbocontrol-helper` is outdated and offers a one-click update prompt.
 - **Fullscreen-Safe Floating Window:** Never gets clipped at the top of the screen when the macOS Menu Bar auto-hides in fullscreen apps.
 
 ---
@@ -171,21 +175,25 @@ To rebuild, deploy to `/Applications/TurboControl.app`, and restart the app:
 ./Scripts/rebuild_and_deploy.sh
 ```
 
-If `/usr/local/bin/turbocontrol-helper` was updated (for example, after adding new helper commands like `cpu_freq`), either click **Update** on the in-app banner or run once:
+If `/Library/PrivilegedHelperTools/turbocontrol-helper` was updated (for example, after adding new helper commands like `cpu_freq`), either click **Update** on the in-app banner or run once:
 ```bash
 sudo /Applications/TurboControl.app/Contents/Resources/setup_helper.sh
 ```
 
 ### 🗑 Uninstall
+Using the uninstall script from the project folder:
+```bash
+./uninstall.sh
+```
 If installed via Homebrew:
 ```bash
 brew uninstall --cask turbocontrol
 ```
 Or manually:
 ```bash
-pkill -f TurboControl
+pkill -x TurboControl
 sudo /sbin/kextunload -b com.rugarciap.DisableTurboBoost 2>/dev/null || true
-sudo rm -rf /Applications/TurboControl.app /usr/local/bin/turbocontrol-helper /usr/local/bin/turbocontrol-fan /etc/sudoers.d/turbocontrol /Library/Extensions/DisableTurboBoost.kext
+sudo rm -rf /Applications/TurboControl.app /Library/PrivilegedHelperTools/turbocontrol-helper /Library/PrivilegedHelperTools/turbocontrol-fan /usr/local/bin/turbocontrol-helper /usr/local/bin/turbocontrol-fan /etc/sudoers.d/turbocontrol /Library/Extensions/DisableTurboBoost.kext
 ```
 
 ---

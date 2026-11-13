@@ -208,12 +208,14 @@ struct MainPopoverView: View {
             }
             .frame(height: 30)
             
-            // Big Turbo Boost Control Widget
-            turboBoostWidget
-            
-            if turbo.isHelperOutdated {
-                helperOutdatedBanner
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            // Big Turbo Boost Control Widget (Intel Macs only)
+            if SystemCapabilities.isIntelMac {
+                turboBoostWidget
+                
+                if turbo.isHelperOutdated {
+                    helperOutdatedBanner
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
             
             // Metric Cards
@@ -223,11 +225,11 @@ struct MainPopoverView: View {
                     title: L10n.cpuTitle,
                     icon: "cpu",
                     iconColor: .blue,
-                    temperature: monitor.cpuTemp,
+                    temperature: monitor.cpuTemp > 0 ? monitor.cpuTemp : nil,
                     frequencyGHz: monitor.cpuFrequencyGHz > 0 ? monitor.cpuFrequencyGHz : nil,
                     loadPercentage: monitor.cpuLoad,
                     loadTitle: L10n.cpuLoadTitle,
-                    customValue: nil,
+                    customValue: monitor.cpuTemp > 0 ? nil : "--°C",
                     customSubtitle: nil,
                     progress: ThermalScale.progress(for: monitor.cpuTemp),
                     progressColor: ThermalScale.color(for: monitor.cpuTemp)
@@ -238,10 +240,10 @@ struct MainPopoverView: View {
                     title: L10n.gpuTitle,
                     icon: "display",
                     iconColor: .purple,
-                    temperature: monitor.gpuTemp,
+                    temperature: monitor.gpuTemp > 0 ? monitor.gpuTemp : nil,
                     loadPercentage: monitor.gpuLoad,
                     loadTitle: L10n.gpuLoadTitle,
-                    customValue: nil,
+                    customValue: monitor.gpuTemp > 0 ? nil : "--°C",
                     customSubtitle: nil,
                     progress: ThermalScale.progress(for: monitor.gpuTemp),
                     progressColor: ThermalScale.color(for: monitor.gpuTemp)

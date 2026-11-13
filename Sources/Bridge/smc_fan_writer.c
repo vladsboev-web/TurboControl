@@ -1,41 +1,8 @@
+#include "smc_common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <IOKit/IOKitLib.h>
-
-typedef struct {
-    char major;
-    char minor;
-    char build;
-    char reserved[1];
-    UInt16 release;
-} SMCKeyData_vers_t;
-
-typedef struct {
-    UInt16 version;
-    UInt16 length;
-    UInt32 cpuPLimit;
-    UInt32 gpuPLimit;
-    UInt32 memPLimit;
-} SMCKeyData_pLimitData_t;
-
-typedef struct {
-    UInt32 dataSize;
-    UInt32 dataType;
-    char dataAttributes;
-} SMCKeyData_keyInfo_t;
-
-typedef struct {
-    UInt32 key;
-    SMCKeyData_vers_t vers;
-    SMCKeyData_pLimitData_t pLimitData;
-    SMCKeyData_keyInfo_t keyInfo;
-    char result;
-    char status;
-    char data8;
-    UInt32 data32;
-    char bytes[32];
-} SMCKeyData_t;
 
 static io_connect_t g_smcConn = 0;
 
@@ -46,14 +13,6 @@ static int smc_open(void) {
     kern_return_t kr = IOServiceOpen(service, mach_task_self(), 0, &g_smcConn);
     IOObjectRelease(service);
     return (kr == kIOReturnSuccess) ? 0 : -1;
-}
-
-static UInt32 four_char_to_uint32(const char *key) {
-    UInt32 ans = 0;
-    for (int i = 0; i < 4 && key[i] != '\0'; i++) {
-        ans = (ans << 8) | (unsigned char)key[i];
-    }
-    return ans;
 }
 
 static int smc_write_key(const char *key, const unsigned char *bytes, UInt32 dataSize) {
@@ -76,6 +35,49 @@ static int smc_write_key(const char *key, const unsigned char *bytes, UInt32 dat
     input.keyInfo.dataSize = keySize;
     input.data8 = 6; // WRITE_BYTES
     memcpy(input.bytes, bytes, dataSize < keySize ? dataSize : keySize);
+    
+    kr = IOConnectCallStructMethod(g_smcConn, 2, &input, structInSize, &output, &structOutSize);
+    return (kr == kIOReturnSuccess && output.result == 0) ? 0 : -1;
+}
+
+static int smc_write_fan_target_rpm(const char *key, int targetRpm) {
+    if (smc_open() != 0) return -1;
+    SMCKeyData_t input = {0};
+    SMCKeyData_t output = {0};
+    input.key = four_char_to_uint32(key);
+    input.data8 = 9; // READ_KEYINFO
+    
+    size_t structInSize = sizeof(SMCKeyData_t);
+    size_t structOutSize = sizeof(SMCKeyData_t);
+    kern_return_t kr = IOConnectCallStructMethod(g_smcConn, 2, &input, structInSize, &output, &structOutSize);
+    if (kr != kIOReturnSuccess) return -1;
+    
+    UInt32 keySize = output.keyInfo.dataSize;
+    UInt32 keyType = output.keyInfo.dataType;
+    if (keySize == 0) return -1;
+    
+    unsigned char writeBytes[32] = {0};
+    UInt32 bytesToWrite = 0;
+    
+    // T2 and newer Mac: 'flt ' (0x666C7420) or dataSize == 4 (IEEE 754 float)
+    if (keyType == 0x666C7420 || keySize == 4) {
+        float fval = (float)targetRpm;
+        memcpy(writeBytes, &fval, sizeof(float));
+        bytesToWrite = 4;
+    } else {
+        // Pre-T2 Mac: 'fpe2' (0x66706532) format (rpm * 4, 16-bit big-endian)
+        int raw = targetRpm * 4;
+        writeBytes[0] = (unsigned char)((raw >> 8) & 0xFF);
+        writeBytes[1] = (unsigned char)(raw & 0xFF);
+        bytesToWrite = 2;
+    }
+    
+    memset(&input, 0, sizeof(SMCKeyData_t));
+    memset(&output, 0, sizeof(SMCKeyData_t));
+    input.key = four_char_to_uint32(key);
+    input.keyInfo.dataSize = keySize;
+    input.data8 = 6; // WRITE_BYTES
+    memcpy(input.bytes, writeBytes, bytesToWrite < keySize ? bytesToWrite : keySize);
     
     kr = IOConnectCallStructMethod(g_smcConn, 2, &input, structInSize, &output, &structOutSize);
     return (kr == kIOReturnSuccess && output.result == 0) ? 0 : -1;
@@ -124,11 +126,9 @@ int main(int argc, char **argv) {
         smc_write_key("F0Md", mdByte, 1);
         smc_write_key("F1Md", mdByte, 1);
         
-        // 2. Write Target RPM in fpe2 format (rpm * 4)
-        int raw = targetRpm * 4;
-        unsigned char rpmBytes[2] = { (unsigned char)((raw >> 8) & 0xFF), (unsigned char)(raw & 0xFF) };
-        int ok0 = smc_write_key("F0Tg", rpmBytes, 2);
-        smc_write_key("F1Tg", rpmBytes, 2);
+        // 2. Write Target RPM (supports both Pre-T2 fpe2 and T2 flt format)
+        int ok0 = smc_write_fan_target_rpm("F0Tg", targetRpm);
+        smc_write_fan_target_rpm("F1Tg", targetRpm);
         if (ok0 == 0) {
             if (g_smcConn != 0) IOServiceClose(g_smcConn);
             printf("FAN_MANUAL_OK %d\n", targetRpm);

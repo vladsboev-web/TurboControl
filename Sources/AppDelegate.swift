@@ -31,6 +31,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        if !SystemCapabilities.isIntelMac {
+            let alert = NSAlert()
+            alert.messageText = L10n.appleSiliconAlertTitle
+            alert.informativeText = L10n.appleSiliconAlertMessage
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: L10n.continueMonitorOnlyBtn)
+            alert.addButton(withTitle: L10n.quit)
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertSecondButtonReturn {
+                NSApplication.shared.terminate(nil)
+                return
+            }
+        }
+        
         // Setup floating panel (immune to fullscreen menu bar auto-hide clipping)
         let panelWidth: CGFloat = 360
         let panelHeight: CGFloat = 504
@@ -113,21 +127,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
         
-        // Initialize automation service
-        _ = AutomationService.shared
-        
-        TurboBoostService.shared.$isTurboDisabled
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.updateStatusItemDisplay()
-            }
-            .store(in: &cancellables)
-        
-        // Restore user's chosen Turbo Boost state on launch
-        if AppSettings.shared.restoreLastTurboState && UserDefaults.standard.object(forKey: AppSettings.Keys.userChosenTurboDisabled) != nil {
-            let savedChoice = AppSettings.shared.userChosenTurboDisabled
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                TurboBoostService.shared.setTurboDisabled(savedChoice, isUserInitiated: false)
+        // Initialize automation and restore Turbo Boost state only on Intel Macs
+        if SystemCapabilities.isIntelMac {
+            _ = AutomationService.shared
+            
+            TurboBoostService.shared.$isTurboDisabled
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in
+                    self?.updateStatusItemDisplay()
+                }
+                .store(in: &cancellables)
+            
+            if AppSettings.shared.restoreLastTurboState && UserDefaults.standard.object(forKey: AppSettings.Keys.userChosenTurboDisabled) != nil {
+                let savedChoice = AppSettings.shared.userChosenTurboDisabled
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    TurboBoostService.shared.setTurboDisabled(savedChoice, isUserInitiated: false)
+                }
             }
         }
         
@@ -179,25 +194,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func showContextMenu() {
         let menu = NSMenu()
-        let turbo = TurboBoostService.shared
-        let isOff = turbo.isTurboDisabled
         
-        let statusTitle = isOff ? L10n.menuTurboStatusDisabled : L10n.menuTurboStatusEnabled
-        let statusItemMenu = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        statusItemMenu.isEnabled = false
-        menu.addItem(statusItemMenu)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        let toggleTitle = isOff ? L10n.menuEnableTurbo : L10n.menuDisableTurbo
-        let toggleItem = NSMenuItem(title: toggleTitle, action: #selector(toggleTurboFromMenu), keyEquivalent: "")
-        toggleItem.target = self
-        toggleItem.isEnabled = !turbo.isWorking
-        if let icon = NSImage(systemSymbolName: isOff ? "bolt.fill" : "leaf.fill", accessibilityDescription: nil) {
-            icon.isTemplate = true
-            toggleItem.image = icon
+        if SystemCapabilities.isIntelMac {
+            let turbo = TurboBoostService.shared
+            let isOff = turbo.isTurboDisabled
+            
+            let statusTitle = isOff ? L10n.menuTurboStatusDisabled : L10n.menuTurboStatusEnabled
+            let statusItemMenu = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+            statusItemMenu.isEnabled = false
+            menu.addItem(statusItemMenu)
+            
+            menu.addItem(NSMenuItem.separator())
+            
+            let toggleTitle = isOff ? L10n.menuEnableTurbo : L10n.menuDisableTurbo
+            let toggleItem = NSMenuItem(title: toggleTitle, action: #selector(toggleTurboFromMenu), keyEquivalent: "")
+            toggleItem.target = self
+            toggleItem.isEnabled = !turbo.isWorking
+            if let icon = NSImage(systemSymbolName: isOff ? "bolt.fill" : "leaf.fill", accessibilityDescription: nil) {
+                icon.isTemplate = true
+                toggleItem.image = icon
+            }
+            menu.addItem(toggleItem)
+        } else {
+            let statusItemMenu = NSMenuItem(title: L10n.menuMonitorOnlyStatus, action: nil, keyEquivalent: "")
+            statusItemMenu.isEnabled = false
+            menu.addItem(statusItemMenu)
         }
-        menu.addItem(toggleItem)
         
         menu.addItem(NSMenuItem.separator())
         

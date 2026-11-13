@@ -150,8 +150,10 @@ struct SettingsView: View {
                     .padding(12)
                     .glassCard(cornerRadius: 12)
                     
-                    // Automation Card
-                    automationCard
+                    // Automation Card (Intel Macs only)
+                    if SystemCapabilities.isIntelMac {
+                        automationCard
+                    }
                     
                     // Toggles Card
                     VStack(alignment: .leading, spacing: 10) {
@@ -161,13 +163,15 @@ struct SettingsView: View {
                             isOn: $settings.autoLaunchAtLogin
                         )
                         
-                        Divider().opacity(0.5)
-                        
-                        settingToggleRow(
-                            title: L10n.restoreTurboTitle,
-                            subtitle: L10n.restoreTurboSub,
-                            isOn: $settings.restoreLastTurboState
-                        )
+                        if SystemCapabilities.isIntelMac {
+                            Divider().opacity(0.5)
+                            
+                            settingToggleRow(
+                                title: L10n.restoreTurboTitle,
+                                subtitle: L10n.restoreTurboSub,
+                                isOn: $settings.restoreLastTurboState
+                            )
+                        }
                         
                         Divider().opacity(0.5)
                         

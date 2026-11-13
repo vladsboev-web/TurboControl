@@ -99,33 +99,15 @@ final class UsageReader {
     
     func getCPUFrequencyGHz() -> Double {
         let nominal = getNominalCPUFrequencyGHz()
-        let helperPath = "/usr/local/bin/turbocontrol-helper"
-        guard FileManager.default.isExecutableFile(atPath: helperPath) else {
+        let result = HelperClient.run(["cpu_freq"], timeout: 3.0)
+        guard result.succeeded else {
             return nominal
         }
-        
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        task.arguments = ["-n", helperPath, "cpu_freq"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        
-        do {
-            try task.run()
-            task.waitUntilExit()
-            guard task.terminationStatus == 0 else {
-                return nominal
-            }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if output.hasPrefix("PCT:"), let pct = Double(output.dropFirst(4)), nominal > 0 {
-                return nominal * (pct / 100.0)
-            } else if let mhz = Double(output), mhz > 100 {
-                return mhz / 1000.0
-            }
-        } catch {
-            return nominal
+        let output = result.stdout
+        if output.hasPrefix("PCT:"), let pct = Double(output.dropFirst(4)), nominal > 0 {
+            return nominal * (pct / 100.0)
+        } else if let mhz = Double(output), mhz > 100 {
+            return mhz / 1000.0
         }
         return nominal
     }

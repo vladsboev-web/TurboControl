@@ -93,11 +93,13 @@ struct HeavyProcessesView: View {
                 Spacer(minLength: 0)
             }
             
-            // Footer Hint
-            Text(L10n.heavyProcessesHint)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
+            // Footer Hint (Turbo rules on Intel Macs only)
+            if SystemCapabilities.isIntelMac {
+                Text(L10n.heavyProcessesHint)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
@@ -135,39 +137,41 @@ struct HeavyProcessesView: View {
             
             Spacer(minLength: 4)
             
-            // Turbo Rule Toggle Pill
-            Button(action: {
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                    let nextRule = currentRule.next
-                    if nextRule == .auto {
-                        settings.appTurboRules.removeValue(forKey: item.ruleKey)
-                    } else {
-                        settings.appTurboRules[item.ruleKey] = nextRule
+            // Turbo Rule Toggle Pill (Intel Macs only)
+            if SystemCapabilities.isIntelMac {
+                Button(action: {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        let nextRule = currentRule.next
+                        if nextRule == .auto {
+                            settings.appTurboRules.removeValue(forKey: item.ruleKey)
+                        } else {
+                            settings.appTurboRules[item.ruleKey] = nextRule
+                        }
+                        AutomationService.shared.evaluateRulesOnDemand()
                     }
-                    AutomationService.shared.evaluateRulesOnDemand()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: currentRule == .disable ? "leaf.fill" : "bolt.fill")
+                            .font(.system(size: 10.5, weight: .bold))
+                        Text(L10n.appRuleBadge(currentRule))
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(ruleForeground(currentRule))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(ruleBackground(currentRule))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(ruleBorder(currentRule), lineWidth: 1)
+                    )
+                    .contentShape(Rectangle())
                 }
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: currentRule == .disable ? "leaf.fill" : "bolt.fill")
-                        .font(.system(size: 10.5, weight: .bold))
-                    Text(L10n.appRuleBadge(currentRule))
-                        .font(.system(size: 11, weight: .bold))
-                }
-                .foregroundColor(ruleForeground(currentRule))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5.5)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(ruleBackground(currentRule))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(ruleBorder(currentRule), lineWidth: 1)
-                )
-                .contentShape(Rectangle())
+                .buttonStyle(SpringButtonStyle(pressedScale: 0.92))
+                .help(L10n.turboRuleTooltip)
             }
-            .buttonStyle(SpringButtonStyle(pressedScale: 0.92))
-            .help(L10n.turboRuleTooltip)
             
             // Terminate Button
             Button(action: {

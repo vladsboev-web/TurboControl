@@ -35,6 +35,8 @@ final class ProcessMonitorService: ObservableObject {
     private var timer: Timer?
     private let workerQueue = DispatchQueue(label: "com.turbocontrol.processMonitor", qos: .utility)
     private var isWindowVisible = false
+    private var isFetching = false
+    private let usageReader = UsageReader()
     
     private init() {}
     
@@ -56,17 +58,25 @@ final class ProcessMonitorService: ObservableObject {
     }
     
     func refreshNow() {
-        guard isWindowVisible else { return }
+        guard isWindowVisible, !isFetching else { return }
+        isFetching = true
         if allCapturedProcesses.isEmpty {
             isLoading = true
         }
         
+        // Take GUI apps snapshot safely on the main thread before dispatching to worker queue
+        var appByPid: [Int32: NSRunningApplication] = [:]
+        for app in NSWorkspace.shared.runningApplications {
+            appByPid[app.processIdentifier] = app
+        }
+        
         workerQueue.async { [weak self] in
             guard let self = self else { return }
-            let captured = self.fetchHeavyProcesses()
+            let captured = self.fetchHeavyProcesses(appByPid: appByPid)
             DispatchQueue.main.async {
                 self.allCapturedProcesses = captured
                 self.isLoading = false
+                self.isFetching = false
                 self.applySortAndPublish()
             }
         }
@@ -107,20 +117,12 @@ final class ProcessMonitorService: ObservableObject {
         }
     }
     
-    private func fetchHeavyProcesses() -> [HeavyProcessItem] {
+    private func fetchHeavyProcesses(appByPid: [Int32: NSRunningApplication]) -> [HeavyProcessItem] {
         let currentUser = NSUserName()
         let selfPid = ProcessInfo.processInfo.processIdentifier
         
-        // Snapshot running GUI apps on main thread safely
-        var appByPid: [Int32: NSRunningApplication] = [:]
-        DispatchQueue.main.sync {
-            for app in NSWorkspace.shared.runningApplications {
-                appByPid[app.processIdentifier] = app
-            }
-        }
-        
         let gpuClients = fetchGPUClientCounts()
-        let totalGPUUsage = UsageReader().getGPULoad()
+        let totalGPUUsage = usageReader.getGPULoad()
         let totalContexts = max(1, gpuClients.values.reduce(0, +))
         
         // Run top -l 2 -s 1 for accurate CPU% and Energy (POWER)
@@ -172,12 +174,7 @@ final class ProcessMonitorService: ObservableObject {
             let execPath = getExecutablePath(pid: pid)
             if isSystemProcess(command: rawCommand, path: execPath, app: app) { continue }
             let displayName = app?.localizedName ?? rawCommand
-            let ruleKey: String
-            if let bundleId = app?.bundleIdentifier, !bundleId.isEmpty {
-                ruleKey = bundleId
-            } else {
-                ruleKey = displayName
-            }
+            let ruleKey = (app?.turboRuleKey).flatMap { $0.isEmpty ? nil : $0 } ?? displayName
             
             let icon = app?.icon ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
             let contexts = gpuClients[pid] ?? 0

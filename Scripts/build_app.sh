@@ -28,26 +28,16 @@ chmod +x "$BUILD_DIR/turbocontrol-fan"
 
 # 3. Compile Swift Sources
 echo "--> Compiling Swift sources..."
+SWIFT_SOURCES=()
+while IFS= read -r -d '' file; do
+    SWIFT_SOURCES+=("$file")
+done < <(find "$PROJECT_DIR/Sources" -name "*.swift" -print0 | sort -z)
+
 swiftc -O \
     -target x86_64-apple-macos12.0 \
     -import-objc-header "$PROJECT_DIR/Sources/Bridge/TurboControl-Bridging-Header.h" \
     -I "$PROJECT_DIR/Sources/Bridge" \
-    "$PROJECT_DIR/Sources/main.swift" \
-    "$PROJECT_DIR/Sources/AppDelegate.swift" \
-    "$PROJECT_DIR/Sources/Models/AppSettings.swift" \
-    "$PROJECT_DIR/Sources/Models/SystemMetrics.swift" \
-    "$PROJECT_DIR/Sources/Services/LaunchAtLogin.swift" \
-    "$PROJECT_DIR/Sources/Services/SMCReader.swift" \
-    "$PROJECT_DIR/Sources/Services/UsageReader.swift" \
-    "$PROJECT_DIR/Sources/Services/TurboBoostService.swift" \
-    "$PROJECT_DIR/Sources/Services/FanControlService.swift" \
-    "$PROJECT_DIR/Sources/Services/AutomationService.swift" \
-    "$PROJECT_DIR/Sources/Services/ProcessMonitorService.swift" \
-    "$PROJECT_DIR/Sources/Views/MetricCardView.swift" \
-    "$PROJECT_DIR/Sources/Views/FanControlCardView.swift" \
-    "$PROJECT_DIR/Sources/Views/SettingsView.swift" \
-    "$PROJECT_DIR/Sources/Views/HeavyProcessesView.swift" \
-    "$PROJECT_DIR/Sources/Views/MainPopoverView.swift" \
+    "${SWIFT_SOURCES[@]}" \
     "$BUILD_DIR/SMCBridge.o" \
     -framework Cocoa \
     -framework SwiftUI \

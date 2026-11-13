@@ -1,41 +1,9 @@
 #include "SMCBridge.h"
+#include "smc_common.h"
 #include <string.h>
 #include <pthread.h>
 #include <IOKit/IOKitLib.h>
-
-typedef struct {
-    char major;
-    char minor;
-    char build;
-    char reserved[1];
-    UInt16 release;
-} SMCKeyData_vers_t;
-
-typedef struct {
-    UInt16 version;
-    UInt16 length;
-    UInt32 cpuPLimit;
-    UInt32 gpuPLimit;
-    UInt32 memPLimit;
-} SMCKeyData_pLimitData_t;
-
-typedef struct {
-    UInt32 dataSize;
-    UInt32 dataType;
-    char dataAttributes;
-} SMCKeyData_keyInfo_t;
-
-typedef struct {
-    UInt32 key;
-    SMCKeyData_vers_t vers;
-    SMCKeyData_pLimitData_t pLimitData;
-    SMCKeyData_keyInfo_t keyInfo;
-    char result;
-    char status;
-    char data8;
-    UInt32 data32;
-    char bytes[32];
-} SMCKeyData_t;
+#include <IOKit/kext/KextManager.h>
 
 static io_connect_t g_smcConn = 0;
 static pthread_mutex_t g_smcMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -64,14 +32,6 @@ void smc_close(void) {
         g_smcConn = 0;
     }
     pthread_mutex_unlock(&g_smcMutex);
-}
-
-static UInt32 four_char_to_uint32(const char *key) {
-    UInt32 ans = 0;
-    for (int i = 0; i < 4 && key[i] != '\0'; i++) {
-        ans = (ans << 8) | (unsigned char)key[i];
-    }
-    return ans;
 }
 
 static double smc_read_key(const char *key) {
@@ -196,4 +156,25 @@ int smc_is_fan_manual_mode(void) {
         return (((int)md & 1) != 0) ? 1 : 0;
     }
     return 0;
+}
+
+int smc_is_kext_loaded(const char *bundle_id) {
+    if (!bundle_id) return 0;
+    CFStringRef cfBundle = CFStringCreateWithCString(kCFAllocatorDefault, bundle_id, kCFStringEncodingUTF8);
+    if (!cfBundle) return 0;
+    CFArrayRef ids = CFArrayCreate(kCFAllocatorDefault, (const void **)&cfBundle, 1, &kCFTypeArrayCallBacks);
+    if (!ids) {
+        CFRelease(cfBundle);
+        return 0;
+    }
+    CFDictionaryRef loaded = KextManagerCopyLoadedKextInfo(ids, NULL);
+    CFRelease(ids);
+    if (!loaded) {
+        CFRelease(cfBundle);
+        return 0;
+    }
+    Boolean found = CFDictionaryContainsKey(loaded, cfBundle);
+    CFRelease(cfBundle);
+    CFRelease(loaded);
+    return found ? 1 : 0;
 }

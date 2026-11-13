@@ -10,23 +10,23 @@ final class TurboBoostService: ObservableObject {
     @Published var isHelperOutdated: Bool = false
     @Published var statusMessage: String?
     
-    private let helperPath = "/usr/local/bin/turbocontrol-helper"
     private let kextBundleID = "com.rugarciap.DisableTurboBoost"
     private let loadedKextPath = "/Library/Extensions/DisableTurboBoost.kext"
     
     private init() {
+        guard SystemCapabilities.isIntelMac else { return }
         checkHelperInstalled()
         refreshStatus()
         setupWakeNotification()
     }
     
     func checkHelperInstalled() {
-        let installed = FileManager.default.isExecutableFile(atPath: helperPath)
-        var outdated = false
+        let installed = HelperClient.isHelperInstalled
+        var outdated = !installed && FileManager.default.isExecutableFile(atPath: HelperClient.legacyHelperPath)
         if installed,
            let bundledHelper = Bundle.main.path(forResource: "turbocontrol-helper", ofType: nil),
            let bundledData = try? Data(contentsOf: URL(fileURLWithPath: bundledHelper)),
-           let installedData = try? Data(contentsOf: URL(fileURLWithPath: helperPath)) {
+           let installedData = try? Data(contentsOf: URL(fileURLWithPath: HelperClient.helperPath)) {
             outdated = (bundledData != installedData)
         }
         DispatchQueue.main.async {
@@ -49,7 +49,7 @@ final class TurboBoostService: ObservableObject {
             guard let self = self else { return }
             if AppSettings.shared.restoreLastTurboState {
                 let savedChoice = AppSettings.shared.userChosenTurboDisabled
-                self.executeToggle(disabled: savedChoice)
+                self.setTurboDisabled(savedChoice, isUserInitiated: false)
             } else {
                 self.refreshStatus()
             }
@@ -58,6 +58,7 @@ final class TurboBoostService: ObservableObject {
     }
     
     func refreshStatus() {
+        guard SystemCapabilities.isIntelMac else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let disabled = self?.checkIfKextLoaded() ?? false
             DispatchQueue.main.async {
@@ -70,6 +71,11 @@ final class TurboBoostService: ObservableObject {
     }
     
     private func checkIfKextLoaded() -> Bool {
+        // Fast in-process IOKit check (0 processes, <0.2ms)
+        if smc_is_kext_loaded(kextBundleID) == 1 {
+            return true
+        }
+        
         // Fast check via kextstat before falling back to kmutil
         for (execPath, args) in [("/usr/sbin/kextstat", ["-b", kextBundleID]), ("/usr/bin/kmutil", ["showloaded", "--bundle-identifier", kextBundleID])] {
             guard FileManager.default.isExecutableFile(atPath: execPath) else { continue }
@@ -127,6 +133,10 @@ final class TurboBoostService: ObservableObject {
     }
     
     func setTurboDisabled(_ disabled: Bool, isUserInitiated: Bool = true, completion: ((Bool) -> Void)? = nil) {
+        guard SystemCapabilities.isIntelMac else {
+            completion?(false)
+            return
+        }
         guard !isWorking else { return }
         
         if isUserInitiated {
@@ -136,9 +146,7 @@ final class TurboBoostService: ObservableObject {
         isWorking = true
         statusMessage = nil
         
-        let helperExists = FileManager.default.isExecutableFile(atPath: helperPath)
-        
-        if !helperExists {
+        if !HelperClient.isHelperInstalled {
             installHelperWithPrompt { [weak self] installed in
                 guard let self = self else { return }
                 if installed {
@@ -158,48 +166,34 @@ final class TurboBoostService: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             let command = disabled ? "disable" : "enable"
-            
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            task.arguments = ["-n", self.helperPath, command]
-            
-            let pipe = Pipe()
-            let errPipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = errPipe
+            let result = HelperClient.run([command], timeout: 10.0)
             
             var success = false
             var needsHelperReinstall = false
             var customErrorMessage: String?
-            do {
-                try task.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                task.waitUntilExit()
-                
-                let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let errOutput = String(data: errData, encoding: .utf8) ?? ""
-                
-                if errOutput.contains("password is required") || errOutput.contains("a terminal is required") || output.contains("KEXT_NOT_FOUND") {
+            
+            let output = result.stdout
+            let errOutput = result.stderr
+            
+            if !result.timedOut {
+                if errOutput.contains("password is required") || errOutput.contains("a terminal is required") || errOutput.contains("not allowed") || output.contains("KEXT_NOT_FOUND") || output.contains("FAN_BINARY_NOT_FOUND") {
                     needsHelperReinstall = true
-                } else if output.contains("NEEDS_APPROVAL") || task.terminationStatus == 27 {
+                } else if output.contains("NEEDS_APPROVAL") || result.exitCode == 27 {
                     customErrorMessage = L10n.errKextApprovalRequired
                     DispatchQueue.main.async {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?General") {
                             NSWorkspace.shared.open(url)
                         }
                     }
-                } else if output.contains("NEEDS_REBOOT") || task.terminationStatus == 28 {
+                } else if output.contains("NEEDS_REBOOT") || result.exitCode == 28 {
                     customErrorMessage = L10n.errKextRebootRequired
                 } else if disabled && output == "DISABLED" {
                     success = true
                 } else if !disabled && output == "ENABLED" {
                     success = true
-                } else if task.terminationStatus == 0 {
+                } else if result.succeeded {
                     success = true
                 }
-            } catch {
-                success = false
             }
             
             if needsHelperReinstall {

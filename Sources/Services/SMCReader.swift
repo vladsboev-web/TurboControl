@@ -7,18 +7,14 @@ final class SMCReader {
         _ = smc_init()
     }
     
-    deinit {
-        smc_close()
-    }
-    
     func getCPUTemperature() -> Double {
         let temp = smc_get_cpu_temp()
-        return (temp > 0) ? temp : 45.0
+        return (temp > 0) ? temp : 0.0
     }
     
     func getGPUTemperature() -> Double {
         let temp = smc_get_gpu_temp()
-        return (temp > 0) ? temp : getCPUTemperature()
+        return (temp > 0) ? temp : 0.0
     }
     
     func getFanRPM() -> Double {

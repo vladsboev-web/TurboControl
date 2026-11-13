@@ -1,19 +1,42 @@
 #!/bin/bash
+set -u
 # TurboControl Privileged Helper for Intel Turbo Boost and Fan Management
 
 KEXT_PATH="/Library/Extensions/DisableTurboBoost.kext"
-FALLBACK_KEXT="/Applications/TurboControl.app/Contents/Resources/DisableTurboBoost.kext"
 BUNDLE_ID="com.rugarciap.DisableTurboBoost"
 
-FAN_BINARY="/usr/local/bin/turbocontrol-fan"
-FALLBACK_FAN="/Applications/TurboControl.app/Contents/Resources/turbocontrol-fan"
+HELPER_DIR="/Library/PrivilegedHelperTools"
+FAN_BINARY="$HELPER_DIR/turbocontrol-fan"
+
+CMD="${1:-}"
+ARG2="${2:-}"
+ARG3="${3:-}"
+
+is_root_owned_safe_file() {
+    local target="$1"
+    [ -n "$target" ] && [ ! -L "$target" ] && [ -f "$target" ] && [ -x "$target" ] || return 1
+    local uid_perm
+    uid_perm=$(/usr/bin/stat -f '%u %Lp' "$target" 2>/dev/null) || return 1
+    local owner_uid="${uid_perm%% *}"
+    local mode="${uid_perm##* }"
+    [ "$owner_uid" = "0" ] || return 1
+    [[ "$mode" =~ ^[0-7]*[0145][0145]$ ]] || return 1
+}
+
+is_root_owned_kext_dir() {
+    local target="$1"
+    [ -n "$target" ] && [ ! -L "$target" ] && [ -d "$target" ] || return 1
+    local owner_uid
+    owner_uid=$(/usr/bin/stat -f '%u' "$target" 2>/dev/null || echo "")
+    [ "$owner_uid" = "0" ]
+}
 
 is_kext_loaded() {
     /usr/sbin/kextstat -b "$BUNDLE_ID" 2>/dev/null | grep -q "$BUNDLE_ID" || \
     /usr/bin/kmutil showloaded --bundle-identifier "$BUNDLE_ID" 2>/dev/null | grep -q "$BUNDLE_ID"
 }
 
-case "$1" in
+case "$CMD" in
     status)
         if is_kext_loaded; then
             echo "DISABLED"
@@ -24,17 +47,14 @@ case "$1" in
         fi
         ;;
     disable)
-        if [ ! -d "$KEXT_PATH" ]; then
-            if [ -d "$FALLBACK_KEXT" ]; then
-                cp -R "$FALLBACK_KEXT" "$KEXT_PATH" 2>/dev/null
-            fi
-        fi
         KM_OUT=""
         KM_RC=0
-        if [ -d "$KEXT_PATH" ]; then
-            xattr -cr "$KEXT_PATH" 2>/dev/null || true
-            chown -R root:wheel "$KEXT_PATH" 2>/dev/null
-            chmod -R 755 "$KEXT_PATH" 2>/dev/null
+        KEXTLOAD_OUT=""
+        if [ -d "$KEXT_PATH" ] && [ ! -L "$KEXT_PATH" ]; then
+            if ! is_root_owned_kext_dir "$KEXT_PATH"; then
+                echo "KEXT_INVALID_OWNER"
+                exit 1
+            fi
             if [ -x /usr/bin/kmutil ]; then
                 KM_OUT=$(/usr/bin/kmutil load -p "$KEXT_PATH" 2>&1)
                 KM_RC=$?
@@ -64,6 +84,12 @@ case "$1" in
         fi
         ;;
     enable)
+        if [ -e "$KEXT_PATH" ] || [ -L "$KEXT_PATH" ]; then
+            if ! is_root_owned_kext_dir "$KEXT_PATH"; then
+                echo "KEXT_INVALID_OWNER"
+                exit 1
+            fi
+        fi
         /sbin/kextunload -b "$BUNDLE_ID" 2>/dev/null || /usr/bin/kmutil unload -b "$BUNDLE_ID" 2>/dev/null
         if is_kext_loaded; then
             echo "FAILED_TO_ENABLE"
@@ -74,22 +100,18 @@ case "$1" in
         fi
         ;;
     fan)
-        FAN_EXEC="$FALLBACK_FAN"
-        if [ ! -f "$FAN_EXEC" ]; then
-            FAN_EXEC="$FAN_BINARY"
-        fi
-        if [ ! -f "$FAN_EXEC" ]; then
+        if ! is_root_owned_safe_file "$FAN_BINARY"; then
             echo "FAN_BINARY_NOT_FOUND"
             exit 1
         fi
-        case "$2" in
+        case "$ARG2" in
             auto)
-                "$FAN_EXEC" auto
+                "$FAN_BINARY" auto
                 exit $?
                 ;;
             manual)
-                if [[ "$3" =~ ^[0-9]+$ ]]; then
-                    "$FAN_EXEC" manual "$3"
+                if [[ "$ARG3" =~ ^[0-9]+$ ]]; then
+                    "$FAN_BINARY" manual "$ARG3"
                     exit $?
                 else
                     echo "INVALID_RPM"

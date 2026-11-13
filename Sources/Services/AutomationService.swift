@@ -3,6 +3,37 @@ import Cocoa
 import Combine
 import IOKit.ps
 
+enum AutomationReason {
+    case powerTransition
+    case appChanged
+    case metricsTick
+}
+
+enum AutomationDecision: Equatable {
+    case noChange
+    case disableTurbo
+    case enableTurbo
+}
+
+struct AutomationInput {
+    let reason: AutomationReason
+    let isTurboDisabled: Bool
+    let isPluggedIn: Bool
+    let batteryPercentage: Int
+    let cpuTemp: Double
+    let frontmostAppRule: AppTurboRule?
+    let onACPowerAction: PowerTurboAction
+    let onBatteryPowerAction: PowerTurboAction
+    let isPowerAutomationActive: Bool
+    let allowTurboOnLowBatteryWhenPluggedIn: Bool
+    let autoTempEnabled: Bool
+    let autoTempDisableThreshold: Double
+    let autoTempEnableThreshold: Double
+    let autoBatteryEnabled: Bool
+    let autoBatteryDisableThreshold: Double
+    let autoBatteryEnableThreshold: Double
+}
+
 final class AutomationService: ObservableObject {
     static let shared = AutomationService()
     
@@ -14,6 +45,7 @@ final class AutomationService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
+        guard SystemCapabilities.isIntelMac else { return }
         refreshPowerState(triggerTransition: false)
         setupPowerObserver()
         setupWorkspaceObserver()
@@ -53,10 +85,133 @@ final class AutomationService: ObservableObject {
             .store(in: &cancellables)
     }
     
-    private enum EvaluationReason {
-        case powerTransition
-        case appChanged
-        case metricsTick
+    func evaluateRulesOnDemand() {
+        evaluateRules(reason: .appChanged)
+    }
+    
+    private func evaluateRules(reason: AutomationReason) {
+        guard SystemCapabilities.isIntelMac else { return }
+        let turbo = TurboBoostService.shared
+        guard !turbo.isWorking else { return }
+        
+        let settings = AppSettings.shared
+        var frontRule: AppTurboRule?
+        if let frontApp = NSWorkspace.shared.frontmostApplication {
+            frontRule = settings.appTurboRules[frontApp.turboRuleKey]
+        }
+        
+        let input = AutomationInput(
+            reason: reason,
+            isTurboDisabled: turbo.isTurboDisabled,
+            isPluggedIn: isPluggedIn,
+            batteryPercentage: batteryPercentage,
+            cpuTemp: SystemMonitor.shared.cpuTemp,
+            frontmostAppRule: frontRule,
+            onACPowerAction: settings.onACPowerAction,
+            onBatteryPowerAction: settings.onBatteryPowerAction,
+            isPowerAutomationActive: settings.isPowerAutomationActive,
+            allowTurboOnLowBatteryWhenPluggedIn: settings.allowTurboOnLowBatteryWhenPluggedIn,
+            autoTempEnabled: settings.autoTempEnabled,
+            autoTempDisableThreshold: settings.autoTempDisableThreshold,
+            autoTempEnableThreshold: settings.autoTempEnableThreshold,
+            autoBatteryEnabled: settings.autoBatteryEnabled,
+            autoBatteryDisableThreshold: settings.autoBatteryDisableThreshold,
+            autoBatteryEnableThreshold: settings.autoBatteryEnableThreshold
+        )
+        
+        switch Self.decideTurboState(input: input) {
+        case .disableTurbo:
+            turbo.setTurboDisabled(true, isUserInitiated: false)
+        case .enableTurbo:
+            turbo.setTurboDisabled(false, isUserInitiated: false)
+        case .noChange:
+            break
+        }
+    }
+    
+    static func decideTurboState(input: AutomationInput) -> AutomationDecision {
+        // 1. Active App Rule takes highest priority if configured
+        if let rule = input.frontmostAppRule, rule != .auto {
+            let shouldDisable = (rule == .disable)
+            if input.isTurboDisabled != shouldDisable {
+                return shouldDisable ? .disableTurbo : .enableTurbo
+            }
+            return .noChange
+        }
+        
+        // 2. Power Transition Rules
+        if input.reason == .powerTransition {
+            if input.isPluggedIn {
+                switch input.onACPowerAction {
+                case .enable:
+                    let blockedByLowBattery = input.autoBatteryEnabled
+                        && Double(input.batteryPercentage) <= input.autoBatteryDisableThreshold
+                        && !input.allowTurboOnLowBatteryWhenPluggedIn
+                    let blockedByTemp = input.autoTempEnabled
+                        && input.cpuTemp >= input.autoTempDisableThreshold
+                    if !blockedByLowBattery && !blockedByTemp && input.isTurboDisabled {
+                        return .enableTurbo
+                    }
+                    return .noChange
+                case .disable:
+                    return !input.isTurboDisabled ? .disableTurbo : .noChange
+                case .keep:
+                    break
+                }
+            } else {
+                switch input.onBatteryPowerAction {
+                case .disable:
+                    return !input.isTurboDisabled ? .disableTurbo : .noChange
+                case .enable:
+                    let blockedByLowBattery = input.autoBatteryEnabled
+                        && Double(input.batteryPercentage) <= input.autoBatteryDisableThreshold
+                    let blockedByTemp = input.autoTempEnabled
+                        && input.cpuTemp >= input.autoTempDisableThreshold
+                    if !blockedByLowBattery && !blockedByTemp && input.isTurboDisabled {
+                        return .enableTurbo
+                    }
+                    return .noChange
+                case .keep:
+                    break
+                }
+            }
+        }
+        
+        // 3. Temperature Thresholds
+        let temp = input.cpuTemp
+        if input.autoTempEnabled && temp > 0 {
+            if temp >= input.autoTempDisableThreshold && !input.isTurboDisabled {
+                return .disableTurbo
+            }
+        }
+        
+        // 4. Battery Level Thresholds
+        if input.autoBatteryEnabled {
+            let lowBatteryBlocked = Double(input.batteryPercentage) <= input.autoBatteryDisableThreshold
+                && !(input.isPluggedIn && input.isPowerAutomationActive && input.allowTurboOnLowBatteryWhenPluggedIn)
+            if !input.isPluggedIn && lowBatteryBlocked && !input.isTurboDisabled {
+                return .disableTurbo
+            }
+        }
+        
+        // 5. Re-enable conditions (hysteresis)
+        if input.isTurboDisabled {
+            let tempAllowsEnable = !input.autoTempEnabled || (temp > 0 && temp <= input.autoTempEnableThreshold)
+            let battAllowsEnable = !input.autoBatteryEnabled || (
+                input.isPluggedIn
+                ? (Double(input.batteryPercentage) >= input.autoBatteryEnableThreshold || (input.isPowerAutomationActive && input.allowTurboOnLowBatteryWhenPluggedIn))
+                : false
+            )
+            
+            let wantsEnableFromTemp = input.autoTempEnabled && temp > 0 && temp <= input.autoTempEnableThreshold
+            let wantsEnableFromBatt = input.autoBatteryEnabled && input.isPluggedIn && Double(input.batteryPercentage) >= input.autoBatteryEnableThreshold
+            
+            if (wantsEnableFromTemp || wantsEnableFromBatt) && tempAllowsEnable && battAllowsEnable {
+                return .enableTurbo
+            }
+        }
+        
+        return .noChange
     }
     
     private func refreshPowerState(triggerTransition: Bool) {
@@ -92,120 +247,13 @@ final class AutomationService: ObservableObject {
             evaluateRules(reason: .powerTransition)
         }
     }
-    
-    func evaluateRulesOnDemand() {
-        evaluateRules(reason: .appChanged)
-    }
-    
-    private func evaluateRules(reason: EvaluationReason) {
-        let turbo = TurboBoostService.shared
-        guard !turbo.isWorking else { return }
-        
-        let settings = AppSettings.shared
-        
-        // 1. Active App Rule takes highest priority if configured
-        if let frontApp = NSWorkspace.shared.frontmostApplication {
-            let appKey = ruleKey(for: frontApp)
-            if let rule = settings.appTurboRules[appKey], rule != .auto {
-                let shouldDisable = (rule == .disable)
-                if turbo.isTurboDisabled != shouldDisable {
-                    turbo.setTurboDisabled(shouldDisable, isUserInitiated: false)
-                }
-                return
-            }
-        }
-        
-        // 2. Power Transition Rules
-        if reason == .powerTransition {
-            if isPluggedIn {
-                switch settings.onACPowerAction {
-                case .enable:
-                    let blockedByLowBattery = settings.autoBatteryEnabled
-                        && Double(batteryPercentage) <= settings.autoBatteryDisableThreshold
-                        && !settings.allowTurboOnLowBatteryWhenPluggedIn
-                    let blockedByTemp = settings.autoTempEnabled
-                        && SystemMonitor.shared.cpuTemp >= settings.autoTempDisableThreshold
-                    if !blockedByLowBattery && !blockedByTemp && turbo.isTurboDisabled {
-                        turbo.setTurboDisabled(false, isUserInitiated: false)
-                    }
-                    return
-                case .disable:
-                    if !turbo.isTurboDisabled {
-                        turbo.setTurboDisabled(true, isUserInitiated: false)
-                    }
-                    return
-                case .keep:
-                    break
-                }
-            } else {
-                switch settings.onBatteryPowerAction {
-                case .disable:
-                    if !turbo.isTurboDisabled {
-                        turbo.setTurboDisabled(true, isUserInitiated: false)
-                    }
-                    return
-                case .enable:
-                    let blockedByLowBattery = settings.autoBatteryEnabled
-                        && Double(batteryPercentage) <= settings.autoBatteryDisableThreshold
-                    let blockedByTemp = settings.autoTempEnabled
-                        && SystemMonitor.shared.cpuTemp >= settings.autoTempDisableThreshold
-                    if !blockedByLowBattery && !blockedByTemp && turbo.isTurboDisabled {
-                        turbo.setTurboDisabled(false, isUserInitiated: false)
-                    }
-                    return
-                case .keep:
-                    break
-                }
-            }
-        }
-        
-        // 3. Temperature Thresholds
-        let temp = SystemMonitor.shared.cpuTemp
-        if settings.autoTempEnabled && temp > 0 {
-            if temp >= settings.autoTempDisableThreshold && !turbo.isTurboDisabled {
-                turbo.setTurboDisabled(true, isUserInitiated: false)
-                return
-            }
-        }
-        
-        // 4. Battery Level Thresholds
-        if settings.autoBatteryEnabled {
-            let lowBatteryBlocked = Double(batteryPercentage) <= settings.autoBatteryDisableThreshold
-                && !(isPluggedIn && settings.isPowerAutomationActive && settings.allowTurboOnLowBatteryWhenPluggedIn)
-            if !isPluggedIn && lowBatteryBlocked && !turbo.isTurboDisabled {
-                turbo.setTurboDisabled(true, isUserInitiated: false)
-                return
-            }
-        }
-        
-        // 5. Re-enable conditions (hysteresis)
-        if turbo.isTurboDisabled {
-            let tempAllowsEnable = !settings.autoTempEnabled || (temp > 0 && temp <= settings.autoTempEnableThreshold)
-            let battAllowsEnable = !settings.autoBatteryEnabled || (
-                isPluggedIn
-                ? (Double(batteryPercentage) >= settings.autoBatteryEnableThreshold || (settings.isPowerAutomationActive && settings.allowTurboOnLowBatteryWhenPluggedIn))
-                : false
-            )
-            
-            let wantsEnableFromTemp = settings.autoTempEnabled && temp > 0 && temp <= settings.autoTempEnableThreshold
-            let wantsEnableFromBatt = settings.autoBatteryEnabled && isPluggedIn && Double(batteryPercentage) >= settings.autoBatteryEnableThreshold
-            
-            if (wantsEnableFromTemp || wantsEnableFromBatt) && tempAllowsEnable && battAllowsEnable {
-                turbo.setTurboDisabled(false, isUserInitiated: false)
-            }
-        }
-    }
-    
-    func ruleKey(for app: NSRunningApplication) -> String {
-        if let bundleId = app.bundleIdentifier, !bundleId.isEmpty {
+}
+
+extension NSRunningApplication {
+    var turboRuleKey: String {
+        if let bundleId = bundleIdentifier, !bundleId.isEmpty {
             return bundleId
         }
-        return app.localizedName ?? ""
-    }
-    
-    deinit {
-        if let source = powerRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        }
+        return localizedName ?? ""
     }
 }
