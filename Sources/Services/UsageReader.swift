@@ -2,8 +2,12 @@ import Foundation
 import IOKit
 
 final class UsageReader {
+    static let shared = UsageReader()
+    
     private var previousCpuInfo: [integer_t] = []
     private let lock = NSLock()
+    
+    private init() {}
     
     func getCPULoad() -> Double {
         lock.lock()
@@ -110,5 +114,56 @@ final class UsageReader {
             return mhz / 1000.0
         }
         return nominal
+    }
+    
+    func getBatteryPowerWatts() -> Double? {
+        let matchDict = IOServiceMatching("AppleSmartBattery")
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, matchDict)
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        
+        var props: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
+              let dict = props?.takeRetainedValue() as? [String: Any] else {
+            return nil
+        }
+        
+        guard let voltageNum = dict["Voltage"] as? NSNumber else { return nil }
+        let ampNum = (dict["InstantAmperage"] as? NSNumber) ?? (dict["Amperage"] as? NSNumber)
+        guard let ampNum = ampNum else { return nil }
+        
+        let voltageMV = voltageNum.doubleValue
+        let amperageMA = Double(Int64(bitPattern: ampNum.uint64Value))
+        let externalConnected = (dict["ExternalConnected"] as? Bool) ?? true
+        
+        // Negative amperage (or non-zero draw on battery) represents battery discharge power
+        if amperageMA < 0 && amperageMA > -30000 {
+            let watts = (voltageMV * abs(amperageMA)) / 1_000_000.0
+            return (watts > 0.1 && watts < 250.0) ? watts : nil
+        } else if !externalConnected && amperageMA > 0 && amperageMA < 30000 {
+            let watts = (voltageMV * amperageMA) / 1_000_000.0
+            return (watts > 0.1 && watts < 250.0) ? watts : nil
+        }
+        return nil
+    }
+    
+    private static var cachedLowPowerModeSupport: Bool?
+    private static let lpmLock = NSLock()
+    
+    func isLowPowerModeSupported() -> Bool {
+        Self.lpmLock.lock()
+        if let cached = Self.cachedLowPowerModeSupport {
+            Self.lpmLock.unlock()
+            return cached
+        }
+        Self.lpmLock.unlock()
+        
+        let result = ProcessRunner.run("/usr/bin/pmset", arguments: ["-g"], timeout: 5.0)
+        let supported = result.succeeded && result.stdout.contains("lowpowermode")
+        
+        Self.lpmLock.lock()
+        Self.cachedLowPowerModeSupport = supported
+        Self.lpmLock.unlock()
+        return supported
     }
 }

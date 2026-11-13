@@ -37,16 +37,22 @@ if [ -f "$SCRIPT_DIR/turbocontrol-helper" ] && [ ! -L "$SCRIPT_DIR/turbocontrol-
 fi
 
 FAN_SRC=""
-for candidate in \
-    "$SCRIPT_DIR/turbocontrol-fan" \
-    "/Applications/TurboControl.app/Contents/Resources/turbocontrol-fan" \
-    "$PROJECT_DIR/build/TurboControl.app/Contents/Resources/turbocontrol-fan" \
-    "$PROJECT_DIR/build/turbocontrol-fan"; do
-    if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
-        FAN_SRC="$candidate"
-        break
+if [[ "$SCRIPT_DIR" == *.app/Contents/Resources ]]; then
+    if [ -f "$SCRIPT_DIR/turbocontrol-fan" ] && [ ! -L "$SCRIPT_DIR/turbocontrol-fan" ]; then
+        FAN_SRC="$SCRIPT_DIR/turbocontrol-fan"
     fi
-done
+else
+    for candidate in \
+        "$SCRIPT_DIR/turbocontrol-fan" \
+        "/Applications/TurboControl.app/Contents/Resources/turbocontrol-fan" \
+        "$PROJECT_DIR/build/TurboControl.app/Contents/Resources/turbocontrol-fan" \
+        "$PROJECT_DIR/build/turbocontrol-fan"; do
+        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+            FAN_SRC="$candidate"
+            break
+        fi
+    done
+fi
 
 if [ -n "$FAN_SRC" ]; then
     cp "$FAN_SRC" "$FAN_PATH"
@@ -56,16 +62,22 @@ fi
 
 # Copy kext
 KEXT_SRC=""
-for candidate in \
-    "$SCRIPT_DIR/DisableTurboBoost.kext" \
-    "/Applications/TurboControl.app/Contents/Resources/DisableTurboBoost.kext" \
-    "$PROJECT_DIR/build/TurboControl.app/Contents/Resources/DisableTurboBoost.kext" \
-    "$PROJECT_DIR/Resources/DisableTurboBoost.kext"; do
-    if [ -d "$candidate" ] && [ ! -L "$candidate" ]; then
-        KEXT_SRC="$candidate"
-        break
+if [[ "$SCRIPT_DIR" == *.app/Contents/Resources ]]; then
+    if [ -d "$SCRIPT_DIR/DisableTurboBoost.kext" ] && [ ! -L "$SCRIPT_DIR/DisableTurboBoost.kext" ]; then
+        KEXT_SRC="$SCRIPT_DIR/DisableTurboBoost.kext"
     fi
-done
+else
+    for candidate in \
+        "$SCRIPT_DIR/DisableTurboBoost.kext" \
+        "/Applications/TurboControl.app/Contents/Resources/DisableTurboBoost.kext" \
+        "$PROJECT_DIR/build/TurboControl.app/Contents/Resources/DisableTurboBoost.kext" \
+        "$PROJECT_DIR/Resources/DisableTurboBoost.kext"; do
+        if [ -d "$candidate" ] && [ ! -L "$candidate" ]; then
+            KEXT_SRC="$candidate"
+            break
+        fi
+    done
+fi
 
 if [ -n "$KEXT_SRC" ]; then
     rm -rf /Library/Extensions/DisableTurboBoost.kext
@@ -93,7 +105,12 @@ Cmnd_Alias TURBOCONTROL_CMDS = \
     $HELPER_PATH fan auto, \
     $HELPER_PATH fan manual [0-9][0-9][0-9], \
     $HELPER_PATH fan manual [0-9][0-9][0-9][0-9], \
-    $HELPER_PATH cpu_freq
+    $HELPER_PATH cpu_freq, \
+    $HELPER_PATH lowpowermode [abc] [01], \
+    $HELPER_PATH cold_sleep [01] [01], \
+    $HELPER_PATH charge_limit [89][0-9], \
+    $HELPER_PATH charge_limit 100, \
+    $HELPER_PATH charge_inhibit [01]
 
 %admin ALL=(root) NOPASSWD: TURBOCONTROL_CMDS
 EOF

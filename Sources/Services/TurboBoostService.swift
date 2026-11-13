@@ -10,8 +10,14 @@ final class TurboBoostService: ObservableObject {
     @Published var isHelperOutdated: Bool = false
     @Published var statusMessage: String?
     
+    private struct PendingToggle {
+        let disabled: Bool
+        let isUserInitiated: Bool
+        let completion: ((Bool) -> Void)?
+    }
+    
     private let kextBundleID = "com.rugarciap.DisableTurboBoost"
-    private let loadedKextPath = "/Library/Extensions/DisableTurboBoost.kext"
+    private var pendingToggle: PendingToggle?
     
     private init() {
         guard SystemCapabilities.isIntelMac else { return }
@@ -53,7 +59,6 @@ final class TurboBoostService: ObservableObject {
             } else {
                 self.refreshStatus()
             }
-            FanControlService.shared.applyCurrentMode()
         }
     }
     
@@ -72,37 +77,7 @@ final class TurboBoostService: ObservableObject {
     
     private func checkIfKextLoaded() -> Bool {
         // Fast in-process IOKit check (0 processes, <0.2ms)
-        if smc_is_kext_loaded(kextBundleID) == 1 {
-            return true
-        }
-        
-        // Fast check via kextstat before falling back to kmutil
-        for (execPath, args) in [("/usr/sbin/kextstat", ["-b", kextBundleID]), ("/usr/bin/kmutil", ["showloaded", "--bundle-identifier", kextBundleID])] {
-            guard FileManager.default.isExecutableFile(atPath: execPath) else { continue }
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: execPath)
-            task.arguments = args
-            
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = Pipe()
-            
-            do {
-                try task.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                task.waitUntilExit()
-                if let output = String(data: data, encoding: .utf8), output.contains(self.kextBundleID) {
-                    return true
-                }
-                if execPath == "/usr/sbin/kextstat" && task.terminationStatus == 0 {
-                    // kextstat ran cleanly and did not contain bundle ID
-                    return false
-                }
-            } catch {
-                continue
-            }
-        }
-        return false
+        return smc_is_kext_loaded(kextBundleID) == 1
     }
     
     func installHelperWithPrompt(completion: @escaping (Bool) -> Void) {
@@ -137,10 +112,15 @@ final class TurboBoostService: ObservableObject {
             completion?(false)
             return
         }
-        guard !isWorking else { return }
         
         if isUserInitiated {
             AppSettings.shared.userChosenTurboDisabled = disabled
+        }
+        
+        if isWorking {
+            pendingToggle?.completion?(false)
+            pendingToggle = PendingToggle(disabled: disabled, isUserInitiated: isUserInitiated, completion: completion)
+            return
         }
         
         isWorking = true
@@ -148,13 +128,14 @@ final class TurboBoostService: ObservableObject {
         
         if !HelperClient.isHelperInstalled {
             installHelperWithPrompt { [weak self] installed in
-                guard let self = self else { return }
+                guard let self = self else {
+                    completion?(false)
+                    return
+                }
                 if installed {
                     self.executeToggle(disabled: disabled, allowRetry: false, completion: completion)
                 } else {
-                    self.isWorking = false
-                    self.statusMessage = L10n.errHelperSetupRequired
-                    completion?(false)
+                    self.finishWithSetupFailure(message: L10n.errHelperSetupRequired, completion: completion)
                 }
             }
         } else {
@@ -162,9 +143,22 @@ final class TurboBoostService: ObservableObject {
         }
     }
     
+    private func finishWithSetupFailure(message: String, completion: ((Bool) -> Void)?) {
+        isWorking = false
+        statusMessage = message
+        completion?(false)
+        if let pending = pendingToggle {
+            pendingToggle = nil
+            pending.completion?(false)
+        }
+    }
+    
     private func executeToggle(disabled: Bool, allowRetry: Bool = true, completion: ((Bool) -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
             let command = disabled ? "disable" : "enable"
             let result = HelperClient.run([command], timeout: 10.0)
             
@@ -199,19 +193,18 @@ final class TurboBoostService: ObservableObject {
             if needsHelperReinstall {
                 DispatchQueue.main.async {
                     guard allowRetry else {
-                        self.isWorking = false
-                        self.statusMessage = L10n.errSudoersRequired
-                        completion?(false)
+                        self.finishWithSetupFailure(message: L10n.errSudoersRequired, completion: completion)
                         return
                     }
                     self.installHelperWithPrompt { [weak self] installed in
-                        guard let self = self else { return }
+                        guard let self = self else {
+                            completion?(false)
+                            return
+                        }
                         if installed {
                             self.executeToggle(disabled: disabled, allowRetry: false, completion: completion)
                         } else {
-                            self.isWorking = false
-                            self.statusMessage = L10n.errSudoersRequired
-                            completion?(false)
+                            self.finishWithSetupFailure(message: L10n.errSudoersRequired, completion: completion)
                         }
                     }
                 }
@@ -230,6 +223,15 @@ final class TurboBoostService: ObservableObject {
                     self.statusMessage = L10n.errToggleFailed
                 }
                 completion?(finalStatus == disabled)
+                
+                if let pending = self.pendingToggle {
+                    self.pendingToggle = nil
+                    if finalStatus == pending.disabled {
+                        pending.completion?(true)
+                    } else {
+                        self.setTurboDisabled(pending.disabled, isUserInitiated: pending.isUserInitiated, completion: pending.completion)
+                    }
+                }
             }
         }
     }

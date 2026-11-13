@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 enum FanMode: String, CaseIterable {
     case auto = "auto"       // macOS Apple Default
@@ -8,12 +9,7 @@ enum FanMode: String, CaseIterable {
     case manual = "manual"   // Manual custom RPM
     
     var title: String {
-        switch self {
-        case .auto: return "Авто (Apple)"
-        case .smart: return "Умный (Ранний)"
-        case .max: return "Макс"
-        case .manual: return "Ручной"
-        }
+        L10n.fanModeTitle(self)
     }
     
     var icon: String {
@@ -47,7 +43,16 @@ final class FanControlService: ObservableObject {
     private var smoothedTemp: Double = 0.0
     private var smartIdleAutoActive: Bool = false
     private var lastFailureTime: Date = .distantPast
+    private var isCommandInFlight: Bool = false
     private var cancellables = Set<AnyCancellable>()
+    
+    private var minFanRPM: Int {
+        max(800, Int(SystemMonitor.shared.fanMinRPM))
+    }
+    
+    private var maxFanRPM: Int {
+        max(minFanRPM, Int(SystemMonitor.shared.fanMaxRPM))
+    }
     
     private init() {
         if let savedMode = UserDefaults.standard.string(forKey: "fanMode"),
@@ -76,6 +81,16 @@ final class FanControlService: ObservableObject {
                 self.setFanManual(rpm: Int(rpm))
             }
             .store(in: &cancellables)
+        
+        // Re-apply mode after system wake (macOS resets SMC fan control to Auto)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    self?.applyCurrentMode()
+                }
+            }
+            .store(in: &cancellables)
     }
     
     func resetToAppleAuto() {
@@ -83,21 +98,24 @@ final class FanControlService: ObservableObject {
     }
     
     private func handleMetricsUpdate() {
-        guard Date().timeIntervalSince(lastFailureTime) >= 10.0 else { return }
+        guard !isCommandInFlight, Date().timeIntervalSince(lastFailureTime) >= 10.0 else { return }
         let smcManual = SystemMonitor.shared.isFanManualMode
         
         switch currentMode {
         case .auto:
-            // If SMC is still stuck in manual mode (e.g. previous command failed), enforce Auto
-            if smcManual {
+            // Enforce Auto only until first confirmed Auto state; afterwards do not fight third-party fan tools
+            if !smcManual {
+                lastAppliedRPM = 0
+            } else if lastAppliedRPM != 0 {
                 setFanAuto(waitUntilDone: false)
             }
             return
             
         case .max:
             // If macOS reset SMC to Auto after sleep, re-apply Max
-            if !smcManual || lastAppliedRPM != 7200 {
-                setFanManual(rpm: 7200)
+            let maxRPM = maxFanRPM
+            if !smcManual || lastAppliedRPM != maxRPM {
+                setFanManual(rpm: maxRPM)
             }
             return
             
@@ -196,7 +214,7 @@ final class FanControlService: ObservableObject {
             handleMetricsUpdate()
         case .max:
             smartIdleAutoActive = false
-            setFanManual(rpm: 7200)
+            setFanManual(rpm: maxFanRPM)
         case .manual:
             smartIdleAutoActive = false
             setFanManual(rpm: Int(targetManualRPM))
@@ -208,36 +226,44 @@ final class FanControlService: ObservableObject {
     }
     
     private func setFanManual(rpm: Int) {
-        executeFanCommand(["fan", "manual", "\(rpm)"], appliedRPM: rpm, waitUntilDone: false)
+        let clampedRPM = max(minFanRPM, min(maxFanRPM, rpm))
+        executeFanCommand(["fan", "manual", "\(clampedRPM)"], appliedRPM: clampedRPM, waitUntilDone: false)
     }
     
     private func executeFanCommand(_ arguments: [String], appliedRPM: Int, waitUntilDone: Bool) {
-        let work = { [weak self] in
-            let result = HelperClient.run(arguments, timeout: 10.0)
-            if waitUntilDone {
-                if result.succeeded {
-                    self?.lastAppliedRPM = appliedRPM
-                    self?.lastFailureTime = .distantPast
-                } else {
-                    self?.lastFailureTime = Date()
+        let updateStateOnMain: (Bool) -> Void = { [weak self] succeeded in
+            guard let self = self else { return }
+            self.isCommandInFlight = false
+            if succeeded {
+                self.lastAppliedRPM = appliedRPM
+                self.lastFailureTime = .distantPast
+                if !waitUntilDone {
+                    SystemMonitor.shared.refreshFanRPMQuickly()
                 }
             } else {
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    if result.succeeded {
-                        self.lastAppliedRPM = appliedRPM
-                        self.lastFailureTime = .distantPast
-                        SystemMonitor.shared.refreshFanRPMQuickly()
-                    } else {
-                        self.lastFailureTime = Date()
-                    }
-                }
+                self.lastFailureTime = Date()
             }
         }
+        
         if waitUntilDone {
-            fanQueue.sync(execute: work)
+            let succeeded = fanQueue.sync {
+                HelperClient.run(arguments, timeout: 10.0).succeeded
+            }
+            if Thread.isMainThread {
+                updateStateOnMain(succeeded)
+            } else {
+                DispatchQueue.main.sync {
+                    updateStateOnMain(succeeded)
+                }
+            }
         } else {
-            fanQueue.async(execute: work)
+            isCommandInFlight = true
+            fanQueue.async {
+                let succeeded = HelperClient.run(arguments, timeout: 10.0).succeeded
+                DispatchQueue.main.async {
+                    updateStateOnMain(succeeded)
+                }
+            }
         }
     }
 }

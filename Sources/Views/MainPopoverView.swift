@@ -3,16 +3,19 @@ import SwiftUI
 private enum PopoverTab {
     case main
     case processes
+    case charts
     case settings
 }
 
 struct MainPopoverView: View {
     @ObservedObject var monitor = SystemMonitor.shared
     @ObservedObject var turbo = TurboBoostService.shared
+    @ObservedObject var powerMgmt = PowerManagementService.shared
     @ObservedObject var settings = AppSettings.shared
     @State private var activeTab: PopoverTab = .main
     @State private var isHoveringTurbo: Bool = false
     @State private var isHoveringTop5: Bool = false
+    @State private var isHoveringCharts: Bool = false
     @State private var isHoveringTheme: Bool = false
     @State private var isHoveringLang: Bool = false
     @State private var isHoveringSettings: Bool = false
@@ -42,6 +45,16 @@ struct MainPopoverView: View {
                     insertion: .move(edge: .trailing).combined(with: .opacity),
                     removal: .move(edge: .trailing).combined(with: .opacity)
                 ))
+            case .charts:
+                ChartsView(onClose: {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                        activeTab = .main
+                    }
+                })
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .trailing).combined(with: .opacity)
+                ))
             case .settings:
                 SettingsView()
                     .transition(.asymmetric(
@@ -53,7 +66,7 @@ struct MainPopoverView: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
         .padding(.top, 14)
-        .frame(width: 360, height: 504)
+        .frame(width: 388, height: 548)
         .background(VisualEffectView(material: .popover, blendingMode: .behindWindow))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -74,6 +87,11 @@ struct MainPopoverView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .resetToMainTab)) { _ in
             activeTab = .main
+        }
+        .onChange(of: settings.chartsEnabled) { enabled in
+            if !enabled && activeTab == .charts {
+                activeTab = .main
+            }
         }
         .preferredColorScheme(settings.theme.colorScheme)
     }
@@ -99,7 +117,32 @@ struct MainPopoverView: View {
                 
                 Spacer()
                 
-                // Top-5 Heavy Processes Tab Button
+                if settings.chartsEnabled {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                            activeTab = .charts
+                        }
+                    }) {
+                        Image(systemName: "chart.xyaxis.line")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(isHoveringCharts ? .accentColor : .secondary)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.accentColor.opacity(isHoveringCharts ? 0.16 : 0.08))
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(SpringButtonStyle(pressedScale: 0.90))
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            isHoveringCharts = hovering
+                        }
+                    }
+                    .help(L10n.chartsBtnTooltip)
+                }
+                
+                // Processes & Sleep Blockers Tab Button
                 Button(action: {
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                         activeTab = .processes
@@ -107,13 +150,13 @@ struct MainPopoverView: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "flame.fill")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(ThermalScale.warmColor)
                         Text(L10n.top5BtnTitle)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(.primary.opacity(0.9))
                     }
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 5.5)
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -227,6 +270,7 @@ struct MainPopoverView: View {
                     iconColor: .blue,
                     temperature: monitor.cpuTemp > 0 ? monitor.cpuTemp : nil,
                     frequencyGHz: monitor.cpuFrequencyGHz > 0 ? monitor.cpuFrequencyGHz : nil,
+                    powerWatts: monitor.cpuPowerWatts > 0 ? monitor.cpuPowerWatts : nil,
                     loadPercentage: monitor.cpuLoad,
                     loadTitle: L10n.cpuLoadTitle,
                     customValue: monitor.cpuTemp > 0 ? nil : "--°C",
@@ -251,6 +295,9 @@ struct MainPopoverView: View {
                 
                 // Interactive Fan Control Card
                 FanControlCardView()
+                
+                // System Power (W) & Low Power Mode Strip
+                powerStatusCard
             }
             
             Spacer(minLength: 0)
@@ -432,6 +479,63 @@ struct MainPopoverView: View {
             }
         }
         .disabled(turbo.isWorking)
+    }
+    
+    private var powerStatusCard: some View {
+        HStack(spacing: 8) {
+            IconBadge(systemName: "bolt.circle.fill", color: ThermalScale.moderateColor, size: 24, iconSize: 12)
+            
+            Text(L10n.totalPowerLabel)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+            
+            Text(monitor.systemPowerWatts > 0 ? String(format: "%.1f W", monitor.systemPowerWatts) : "-- W")
+                .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                .foregroundColor(.primary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2.5)
+                .background(
+                    Capsule()
+                        .fill(ThermalScale.moderateColor.opacity(0.14))
+                )
+                .animation(nil, value: monitor.systemPowerWatts)
+            
+            Spacer(minLength: 4)
+            
+            if powerMgmt.isLowPowerModeSupported {
+                let isActive = powerMgmt.isLowPowerEnabledForScope
+                Button(action: {
+                    powerMgmt.setLowPowerMode(enabled: !isActive)
+                }) {
+                    HStack(spacing: 4) {
+                        if powerMgmt.isTogglingLowPower {
+                            ProgressView()
+                                .scaleEffect(0.55)
+                        } else {
+                            Image(systemName: isActive ? "battery.100.bolt" : "leaf")
+                                .font(.system(size: 10.5, weight: .semibold))
+                        }
+                        Text(L10n.lowPowerTitle)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(isActive ? .white : .secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isActive ? ThermalScale.moderateColor : Color.primary.opacity(0.07))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(SpringButtonStyle(pressedScale: 0.94))
+                .disabled(powerMgmt.isTogglingLowPower)
+                .help("\(L10n.lowPowerScopeLabel) \(L10n.lowPowerScopeTitle(settings.lowPowerScope))")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .glassCard(cornerRadius: 12)
     }
 }
 

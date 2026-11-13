@@ -92,6 +92,12 @@ enum AppLanguage: String, CaseIterable {
     }
 }
 
+enum LowPowerScope: String, CaseIterable {
+    case battery = "b"
+    case ac = "c"
+    case both = "a"
+}
+
 enum L10n {
     private static var isEn: Bool {
         AppSettings.shared.language == .en
@@ -209,14 +215,25 @@ enum L10n {
     static var minGap10Deg: String { isEn ? "Min 10°C gap" : "Зазор мин. 10°C" }
     static var minGap10Pct: String { isEn ? "Min 10% gap" : "Зазор мин. 10%" }
     
-    // Heavy Processes Window
-    static var top5BtnTitle: String { isEn ? "Top-5" : "Топ-5" }
-    static var top5Tooltip: String { isEn ? "Who's heating the Mac? (Top 5 processes)" : "Кто греет Mac? (Топ-5 процессов)" }
-    static var heavyProcessesTitle: String { isEn ? "Who's heating Mac?" : "Кто греет Mac?" }
+    // Heavy Processes Window (renamed to Processes)
+    static var top5BtnTitle: String { isEn ? "Processes" : "Процессы" }
+    static var top5Tooltip: String { isEn ? "Processes & sleep blockers" : "Процессы и блокировки сна" }
+    static var heavyProcessesTitle: String { isEn ? "Processes" : "Процессы" }
     static var sortCPU: String { "CPU %" }
     static var sortGPU: String { "GPU" }
     static var sortEnergy: String { isEn ? "Energy" : "Энергия" }
+    static var sortSleep: String { isEn ? "Sleep" : "Сон" }
     static var noHeavyProcesses: String { isEn ? "No active user processes" : "Нет активных процессов" }
+    static var noSleepBlockers: String { isEn ? "No processes preventing sleep" : "Никто не мешает сну Mac" }
+    static var sleepBlockersHint: String {
+        isEn ? "Active macOS sleep assertions (pmset)" : "Активные блокировки сна macOS (pmset)"
+    }
+    static func sleepAssertionBadge(_ type: String) -> String {
+        if type.contains("Display") { return isEn ? "Display" : "Экран" }
+        if type.contains("System") { return isEn ? "System" : "Система" }
+        if type.contains("Background") { return isEn ? "Background" : "Фон" }
+        return isEn ? "Sleep" : "Сон"
+    }
     static var killProcessTooltip: String { isEn ? "Quit process" : "Завершить процесс" }
     static var turboRuleTooltip: String { isEn ? "Click to change Turbo Boost rule when active" : "Нажми для смены правила Turbo при активности" }
     static func appRuleBadge(_ rule: AppTurboRule) -> String {
@@ -229,6 +246,70 @@ enum L10n {
     static var heavyProcessesHint: String {
         isEn ? "⚡ applies Turbo rule when app is active" : "⚡ применяет правило Turbo, пока окно активно"
     }
+    
+    // Power Watts, Low Power Mode, Cold Sleep, Charge Limit, Charts
+    static var totalPowerLabel: String { isEn ? "System Power" : "Общий расход" }
+    static var lowPowerTitle: String { isEn ? "Low Power Mode" : "Энергосбережение" }
+    static var lowPowerScopeLabel: String { isEn ? "Low Power Mode:" : "Энергосбережение:" }
+    static func lowPowerScopeTitle(_ scope: LowPowerScope) -> String {
+        switch scope {
+        case .battery: return isEn ? "Battery" : "Батарея"
+        case .ac: return isEn ? "Charger" : "Сеть"
+        case .both: return isEn ? "Both" : "Оба"
+        }
+    }
+    static var powerSectionTitle: String { isEn ? "Power & Battery" : "Питание и батарея" }
+    static var coldSleepTitle: String { isEn ? "Cold sleep on battery" : "Холодный сон на батарее" }
+    static var coldSleepSub: String {
+        isEn
+        ? "Disables Power Nap & Wi-Fi wake on battery (Find My won't update while asleep)"
+        : "Отключает Power Nap и Wi-Fi во сне от батареи (Локатор не работает при закрытой крышке)"
+    }
+    static var chargeLimitTitle: String { isEn ? "Battery charge limit" : "Лимит заряда батареи" }
+    static var chargeLimitSub: String {
+        isEn
+        ? "Stops charging at limit without forced discharge"
+        : "Останавливает зарядку на пороге без принудительного разряда"
+    }
+    static var chargeLimitUnsupported: String {
+        isEn ? "Not supported on this Mac" : "Не поддерживается этим Mac"
+    }
+    static func chargeLimitValue(_ pct: Int) -> String {
+        isEn ? "Max: \(pct)%" : "Порог: \(pct)%"
+    }
+    static var chartsSectionTitle: String { isEn ? "History Charts" : "Графики истории" }
+    static var chartsToggleTitle: String { isEn ? "Enable history charts" : "Включить графики" }
+    static var chartsToggleSub: String {
+        isEn
+        ? "Collects CPU temp, frequency, RPM and power in background"
+        : "Собирает историю °C, частоты, RPM и ватт в фоне"
+    }
+    static var chartsIntervalLabel: String { isEn ? "Chart sampling:" : "Частота записи:" }
+    static func chartIntervalBadge(_ sec: Double) -> String {
+        let s = Int(sec)
+        if s < 60 {
+            return isEn ? "\(s) sec" : "\(s) сек"
+        } else if s % 60 == 0 {
+            let m = s / 60
+            return isEn ? "\(m) min" : "\(m) мин"
+        } else {
+            let m = s / 60
+            let rem = s % 60
+            return isEn ? "\(m)m \(rem)s" : "\(m)м \(rem)с"
+        }
+    }
+    static var chartsMinLabel: String { isEn ? "30s" : "30с" }
+    static var chartsMaxLabel: String { isEn ? "5m" : "5м" }
+    static var chartsBtnTooltip: String { isEn ? "Performance & power history charts" : "Графики температуры, частоты, RPM и мощности" }
+    static var chartsTitle: String { isEn ? "History Charts" : "Графики" }
+    static var chartCpuTemp: String { isEn ? "CPU Temp" : "Температура CPU" }
+    static var chartCpuFreq: String { isEn ? "CPU Frequency" : "Частота CPU" }
+    static var chartFanRPM: String { isEn ? "Fan Speed" : "Обороты кулера" }
+    static var chartPowerW: String { isEn ? "System Power" : "Потребление" }
+    static var chartsCollecting: String { isEn ? "Collecting initial samples..." : "Идёт сбор первых точек..." }
+    static var chartMin: String { isEn ? "Min" : "Мин" }
+    static var chartMax: String { isEn ? "Max" : "Макс" }
+    static var chartNow: String { isEn ? "Now" : "Тек" }
     
     // Helper Update Banner
     static var helperOutdatedTitle: String { isEn ? "System helper update required" : "Требуется обновить системный хелпер" }
@@ -255,6 +336,7 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
     
     private let defaults = UserDefaults.standard
+    private var cancellables = Set<AnyCancellable>()
     
     enum Keys {
         static let updateInterval = "updateInterval"
@@ -276,6 +358,14 @@ final class AppSettings: ObservableObject {
         static let autoBatteryEnableThreshold = "autoBatteryEnableThreshold"
         static let autoBatteryAdvanced = "autoBatteryAdvanced"
         static let appTurboRules = "appTurboRules"
+        static let chartsEnabled = "chartsEnabled"
+        static let chartsSampleInterval = "chartsSampleInterval"
+        static let lowPowerScope = "lowPowerScope"
+        static let coldSleepOnBattery = "coldSleepOnBattery"
+        static let savedBatteryPowerNap = "savedBatteryPowerNap"
+        static let savedBatteryTcpKeepAlive = "savedBatteryTcpKeepAlive"
+        static let chargeLimitEnabled = "chargeLimitEnabled"
+        static let chargeLimitPercentage = "chargeLimitPercentage"
     }
     
     @Published var onACPowerAction: PowerTurboAction {
@@ -372,6 +462,67 @@ final class AppSettings: ObservableObject {
         }
     }
     
+    @Published var chartsEnabled: Bool {
+        didSet {
+            defaults.set(chartsEnabled, forKey: Keys.chartsEnabled)
+            NotificationCenter.default.post(name: .chartsSettingsChanged, object: nil)
+        }
+    }
+    
+    @Published var chartsSampleInterval: Double {
+        didSet {
+            let clamped = max(30.0, min(300.0, chartsSampleInterval))
+            if clamped != chartsSampleInterval {
+                chartsSampleInterval = clamped
+            }
+        }
+    }
+    
+    @Published var lowPowerScope: LowPowerScope {
+        didSet {
+            defaults.set(lowPowerScope.rawValue, forKey: Keys.lowPowerScope)
+        }
+    }
+    
+    @Published var coldSleepOnBattery: Bool {
+        didSet {
+            defaults.set(coldSleepOnBattery, forKey: Keys.coldSleepOnBattery)
+        }
+    }
+    
+    var savedBatteryPowerNap: Int? {
+        get { defaults.object(forKey: Keys.savedBatteryPowerNap) as? Int }
+        set {
+            if let v = newValue { defaults.set(v, forKey: Keys.savedBatteryPowerNap) }
+            else { defaults.removeObject(forKey: Keys.savedBatteryPowerNap) }
+        }
+    }
+    
+    var savedBatteryTcpKeepAlive: Int? {
+        get { defaults.object(forKey: Keys.savedBatteryTcpKeepAlive) as? Int }
+        set {
+            if let v = newValue { defaults.set(v, forKey: Keys.savedBatteryTcpKeepAlive) }
+            else { defaults.removeObject(forKey: Keys.savedBatteryTcpKeepAlive) }
+        }
+    }
+    
+    @Published var chargeLimitEnabled: Bool {
+        didSet {
+            defaults.set(chargeLimitEnabled, forKey: Keys.chargeLimitEnabled)
+        }
+    }
+    
+    @Published var chargeLimitPercentage: Int {
+        didSet {
+            let clamped = max(80, min(95, chargeLimitPercentage))
+            if clamped != chargeLimitPercentage {
+                chargeLimitPercentage = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.chargeLimitPercentage)
+        }
+    }
+    
     var isPowerAutomationActive: Bool {
         onACPowerAction != .keep || onBatteryPowerAction != .keep
     }
@@ -390,12 +541,7 @@ final class AppSettings: ObservableObject {
         }
     }
     
-    @Published var updateInterval: Double {
-        didSet {
-            defaults.set(updateInterval, forKey: Keys.updateInterval)
-            NotificationCenter.default.post(name: .updateIntervalChanged, object: nil)
-        }
-    }
+    @Published var updateInterval: Double
     
     @Published var autoLaunchAtLogin: Bool {
         didSet {
@@ -501,6 +647,43 @@ final class AppSettings: ObservableObject {
         } else {
             self.appTurboRules = [:]
         }
+        
+        self.chartsEnabled = defaults.bool(forKey: Keys.chartsEnabled)
+        let savedChartInterval = defaults.double(forKey: Keys.chartsSampleInterval)
+        self.chartsSampleInterval = (savedChartInterval >= 30.0 && savedChartInterval <= 300.0) ? savedChartInterval : 60.0
+        
+        if let scopeRaw = defaults.string(forKey: Keys.lowPowerScope),
+           let scope = LowPowerScope(rawValue: scopeRaw) {
+            self.lowPowerScope = scope
+        } else {
+            self.lowPowerScope = .both
+        }
+        
+        self.coldSleepOnBattery = defaults.bool(forKey: Keys.coldSleepOnBattery)
+        self.chargeLimitEnabled = defaults.bool(forKey: Keys.chargeLimitEnabled)
+        let savedLimit = defaults.integer(forKey: Keys.chargeLimitPercentage)
+        self.chargeLimitPercentage = (savedLimit >= 80 && savedLimit <= 95) ? savedLimit : 80
+        
+        // Debounce interval sliders so dragging doesn't spam UserDefaults and recreate timers on every tick
+        $updateInterval
+            .dropFirst()
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+            .sink { [weak self] interval in
+                guard let self = self else { return }
+                self.defaults.set(interval, forKey: Keys.updateInterval)
+                NotificationCenter.default.post(name: .updateIntervalChanged, object: nil)
+            }
+            .store(in: &cancellables)
+        
+        $chartsSampleInterval
+            .dropFirst()
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+            .sink { [weak self] interval in
+                guard let self = self else { return }
+                self.defaults.set(interval, forKey: Keys.chartsSampleInterval)
+                NotificationCenter.default.post(name: .chartsSettingsChanged, object: nil)
+            }
+            .store(in: &cancellables)
     }
 }
 
@@ -508,4 +691,5 @@ extension Notification.Name {
     static let updateIntervalChanged = Notification.Name("updateIntervalChanged")
     static let menuBarDisplayChanged = Notification.Name("menuBarDisplayChanged")
     static let appThemeChanged = Notification.Name("appThemeChanged")
+    static let chartsSettingsChanged = Notification.Name("chartsSettingsChanged")
 }

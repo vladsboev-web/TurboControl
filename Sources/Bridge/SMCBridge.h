@@ -17,6 +17,11 @@ double smc_get_fan_min_rpm(void);
 double smc_get_fan_max_rpm(void);
 int smc_is_fan_manual_mode(void);
 int smc_is_kext_loaded(const char *bundle_id);
+double smc_get_cpu_power_watts(void);
+double smc_get_system_power_watts(void);
+int smc_get_battery_charge_limit(void);
+int smc_is_charge_inhibited(void);
+int smc_supports_charge_limit(void);
 
 #ifdef __cplusplus
 }

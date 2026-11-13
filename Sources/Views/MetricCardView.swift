@@ -146,6 +146,7 @@ struct MetricCardView: View {
     let iconColor: Color
     let temperature: Double?
     var frequencyGHz: Double? = nil
+    var powerWatts: Double? = nil
     let loadPercentage: Double?
     let loadTitle: String? // "Нагрузка CPU:" / "Нагрузка GPU:"
     let customValue: String?
@@ -166,6 +167,19 @@ struct MetricCardView: View {
                 }
                 
                 Spacer()
+                
+                if let watts = powerWatts {
+                    Text(String(format: "%.1f W", watts))
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(ThermalScale.moderateColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2.5)
+                        .background(
+                            Capsule()
+                                .fill(ThermalScale.moderateColor.opacity(0.12))
+                        )
+                        .animation(nil, value: watts)
+                }
                 
                 if let freq = frequencyGHz {
                     Text(String(format: "%.2f GHz", freq))

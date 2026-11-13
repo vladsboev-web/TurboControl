@@ -46,8 +46,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         // Setup floating panel (immune to fullscreen menu bar auto-hide clipping)
-        let panelWidth: CGFloat = 360
-        let panelHeight: CGFloat = 504
+        let panelWidth: CGFloat = 388
+        let panelHeight: CGFloat = 548
         let panel = FloatingPanel(
             contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -80,12 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             updateStatusItemDisplay()
         }
         
-        // Setup event monitors for outside clicks and Escape key
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            guard let self = self, self.isPanelOpen else { return }
-            self.closePopover(sender: event)
-        }
-        
+        // Setup local monitor for Escape key when panel is open
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self = self, self.isPanelOpen else { return event }
             if event.keyCode == 53 { // Escape
@@ -127,6 +122,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
         
+        // Initialize power management and fan control services
+        _ = PowerManagementService.shared
+        _ = FanControlService.shared
+        
         // Initialize automation and restore Turbo Boost state only on Intel Macs
         if SystemCapabilities.isIntelMac {
             _ = AutomationService.shared
@@ -144,11 +143,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     TurboBoostService.shared.setTurboDisabled(savedChoice, isUserInitiated: false)
                 }
             }
-        }
-        
-        // Apply fan mode on startup
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            FanControlService.shared.applyCurrentMode()
         }
     }
     
@@ -262,10 +256,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    private func installGlobalClickMonitor() {
+        guard globalEventMonitor == nil else { return }
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self, self.isPanelOpen else { return }
+            self.closePopover(sender: event)
+        }
+    }
+    
+    private func removeGlobalClickMonitor() {
+        if let monitor = globalEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEventMonitor = nil
+        }
+    }
+    
     func showPopover(sender: AnyObject?) {
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
         NotificationCenter.default.post(name: .resetToMainTab, object: nil)
         isPanelOpen = true
+        installGlobalClickMonitor()
         SystemMonitor.shared.isPopoverVisible = true
         SystemMonitor.shared.updateMetrics()
         TurboBoostService.shared.refreshStatus()
@@ -302,7 +312,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func closePopover(sender: AnyObject?) {
         guard isPanelOpen else { return }
         isPanelOpen = false
+        removeGlobalClickMonitor()
         SystemMonitor.shared.isPopoverVisible = false
+        ProcessMonitorService.shared.stopMonitoring()
         
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.16
@@ -312,17 +324,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self, !self.isPanelOpen else { return }
             self.panel.orderOut(nil)
             self.panel.alphaValue = 1.0
+            NotificationCenter.default.post(name: .resetToMainTab, object: nil)
         })
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {
-        if let monitor = globalEventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        removeGlobalClickMonitor()
         if let monitor = localEventMonitor {
             NSEvent.removeMonitor(monitor)
         }
         FanControlService.shared.resetToAppleAuto()
+        if AppSettings.shared.chargeLimitEnabled {
+            PowerManagementService.shared.resetChargeLimit(waitUntilDone: true)
+        }
     }
 }
 

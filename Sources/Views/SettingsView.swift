@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var settings = AppSettings.shared
+    @ObservedObject var powerMgmt = PowerManagementService.shared
     @State private var isHoveringClose = false
     
     var body: some View {
@@ -154,6 +155,12 @@ struct SettingsView: View {
                     if SystemCapabilities.isIntelMac {
                         automationCard
                     }
+                    
+                    // Power & Battery Card
+                    powerBatteryCard
+                    
+                    // History Charts Card
+                    chartsSettingsCard
                     
                     // Toggles Card
                     VStack(alignment: .leading, spacing: 10) {
@@ -421,6 +428,168 @@ struct SettingsView: View {
                 .toggleStyle(SwitchToggleStyle(tint: .accentColor))
                 .controlSize(.small)
         }
+    }
+    
+    private var powerBatteryCard: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 6) {
+                Image(systemName: "battery.100.bolt")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundColor(ThermalScale.optimalColor)
+                Text(L10n.powerSectionTitle)
+                    .font(.system(size: 13.5, weight: .bold))
+            }
+            
+            if powerMgmt.isLowPowerModeSupported {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text(L10n.lowPowerScopeLabel)
+                            .font(.system(size: 12.5, weight: .medium))
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { powerMgmt.isLowPowerEnabledForScope },
+                            set: { powerMgmt.setLowPowerMode(enabled: $0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: ThermalScale.moderateColor))
+                        .controlSize(.small)
+                        .disabled(powerMgmt.isTogglingLowPower)
+                    }
+                    
+                    HStack(spacing: 3) {
+                        ForEach(LowPowerScope.allCases, id: \.self) { scope in
+                            let isSelected = settings.lowPowerScope == scope
+                            Button(action: {
+                                withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                                    settings.lowPowerScope = scope
+                                }
+                            }) {
+                                Text(L10n.lowPowerScopeTitle(scope))
+                                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                                    .foregroundColor(isSelected ? .white : .secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 5.5, style: .continuous)
+                                            .fill(isSelected ? ThermalScale.moderateColor : Color.clear)
+                                    )
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(SpringButtonStyle(pressedScale: 0.94))
+                        }
+                    }
+                    .padding(2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.primary.opacity(0.06))
+                    )
+                }
+                
+                Divider().opacity(0.5)
+            }
+            
+            settingToggleRow(
+                title: L10n.coldSleepTitle,
+                subtitle: L10n.coldSleepSub,
+                isOn: $settings.coldSleepOnBattery
+            )
+            
+            if SystemCapabilities.isIntelMac {
+                Divider().opacity(0.5)
+                
+                VStack(alignment: .leading, spacing: 7) {
+                    settingToggleRow(
+                        title: L10n.chargeLimitTitle,
+                        subtitle: powerMgmt.isChargeLimitSupported ? L10n.chargeLimitSub : L10n.chargeLimitUnsupported,
+                        isOn: $settings.chargeLimitEnabled.animation(.easeInOut(duration: 0.18))
+                    )
+                    .disabled(!powerMgmt.isChargeLimitSupported)
+                    .opacity(powerMgmt.isChargeLimitSupported ? 1.0 : 0.6)
+                    
+                    if settings.chargeLimitEnabled && powerMgmt.isChargeLimitSupported {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(L10n.chargeLimitValue(settings.chargeLimitPercentage))
+                                    .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                                    .foregroundColor(ThermalScale.optimalColor)
+                                Spacer()
+                                Text("80% – 95%")
+                                    .font(.system(size: 10.5))
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(
+                                value: Binding(
+                                    get: { Double(settings.chargeLimitPercentage) },
+                                    set: { settings.chargeLimitPercentage = Int($0) }
+                                ),
+                                in: 80...95,
+                                step: 1
+                            )
+                            .accentColor(ThermalScale.optimalColor)
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .glassCard(cornerRadius: 12)
+    }
+    
+    private var chartsSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.xyaxis.line")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                Text(L10n.chartsSectionTitle)
+                    .font(.system(size: 13.5, weight: .bold))
+            }
+            
+            settingToggleRow(
+                title: L10n.chartsToggleTitle,
+                subtitle: L10n.chartsToggleSub,
+                isOn: $settings.chartsEnabled.animation(.easeInOut(duration: 0.18))
+            )
+            
+            if settings.chartsEnabled {
+                Divider().opacity(0.5)
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(L10n.chartsIntervalLabel)
+                            .font(.system(size: 12.5, weight: .medium))
+                        Spacer()
+                        Text(L10n.chartIntervalBadge(settings.chartsSampleInterval))
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                            .foregroundColor(.accentColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2.5)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                    }
+                    
+                    HStack(spacing: 6) {
+                        Text(L10n.chartsMinLabel)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        
+                        Slider(
+                            value: $settings.chartsSampleInterval,
+                            in: 30...300,
+                            step: 30
+                        )
+                        
+                        Text(L10n.chartsMaxLabel)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(12)
+        .glassCard(cornerRadius: 12)
     }
 }
 

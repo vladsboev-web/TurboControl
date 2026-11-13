@@ -8,6 +8,22 @@
 static io_connect_t g_smcConn = 0;
 static pthread_mutex_t g_smcMutex = PTHREAD_MUTEX_INITIALIZER;
 
+#define SMC_KEYINFO_CACHE_CAP 64
+
+typedef struct {
+    UInt32 keyCode;
+    UInt32 dataSize;
+    UInt32 dataType;
+    int exists; // 1 = valid, -1 = not supported on this Mac
+} SMCKeyInfoCacheEntry;
+
+static SMCKeyInfoCacheEntry g_keyInfoCache[SMC_KEYINFO_CACHE_CAP];
+static int g_keyInfoCacheCount = 0;
+
+static int g_cachedGpuTempIdx = -1;
+static int g_cachedCpuPowerIdx = -1;
+static int g_cachedSysPowerIdx = -1;
+
 int smc_init(void) {
     pthread_mutex_lock(&g_smcMutex);
     if (g_smcConn != 0) {
@@ -31,6 +47,7 @@ void smc_close(void) {
         IOServiceClose(g_smcConn);
         g_smcConn = 0;
     }
+    g_keyInfoCacheCount = 0;
     pthread_mutex_unlock(&g_smcMutex);
 }
 
@@ -45,24 +62,49 @@ static double smc_read_key(const char *key) {
     
     SMCKeyData_t input;
     SMCKeyData_t output;
-    memset(&input, 0, sizeof(SMCKeyData_t));
-    memset(&output, 0, sizeof(SMCKeyData_t));
-    
     UInt32 keyCode = four_char_to_uint32(key);
-    input.key = keyCode;
-    input.data8 = 9; // READ_KEYINFO
-    
     size_t inSize = sizeof(SMCKeyData_t);
     size_t outSize = sizeof(SMCKeyData_t);
     
-    kern_return_t kr = IOConnectCallStructMethod(g_smcConn, 2, &input, inSize, &output, &outSize);
-    if (kr != kIOReturnSuccess) {
-        pthread_mutex_unlock(&g_smcMutex);
-        return -1.0;
+    int cacheIdx = -1;
+    for (int i = 0; i < g_keyInfoCacheCount; i++) {
+        if (g_keyInfoCache[i].keyCode == keyCode) {
+            cacheIdx = i;
+            break;
+        }
     }
     
-    UInt32 dataSize = output.keyInfo.dataSize;
-    UInt32 dataType = output.keyInfo.dataType;
+    UInt32 dataSize = 0;
+    UInt32 dataType = 0;
+    
+    if (cacheIdx >= 0) {
+        if (g_keyInfoCache[cacheIdx].exists < 0) {
+            pthread_mutex_unlock(&g_smcMutex);
+            return -1.0;
+        }
+        dataSize = g_keyInfoCache[cacheIdx].dataSize;
+        dataType = g_keyInfoCache[cacheIdx].dataType;
+    } else {
+        memset(&input, 0, sizeof(SMCKeyData_t));
+        memset(&output, 0, sizeof(SMCKeyData_t));
+        input.key = keyCode;
+        input.data8 = 9; // READ_KEYINFO
+        
+        kern_return_t kr = IOConnectCallStructMethod(g_smcConn, 2, &input, inSize, &output, &outSize);
+        if (kr != kIOReturnSuccess || output.result != 0 || output.keyInfo.dataSize == 0) {
+            if (g_keyInfoCacheCount < SMC_KEYINFO_CACHE_CAP) {
+                g_keyInfoCache[g_keyInfoCacheCount++] = (SMCKeyInfoCacheEntry){keyCode, 0, 0, -1};
+            }
+            pthread_mutex_unlock(&g_smcMutex);
+            return -1.0;
+        }
+        
+        dataSize = output.keyInfo.dataSize;
+        dataType = output.keyInfo.dataType;
+        if (g_keyInfoCacheCount < SMC_KEYINFO_CACHE_CAP) {
+            g_keyInfoCache[g_keyInfoCacheCount++] = (SMCKeyInfoCacheEntry){keyCode, dataSize, dataType, 1};
+        }
+    }
     
     memset(&input, 0, sizeof(SMCKeyData_t));
     memset(&output, 0, sizeof(SMCKeyData_t));
@@ -70,10 +112,10 @@ static double smc_read_key(const char *key) {
     input.keyInfo.dataSize = dataSize;
     input.data8 = 5; // READ_BYTES
     
-    kr = IOConnectCallStructMethod(g_smcConn, 2, &input, inSize, &output, &outSize);
+    kern_return_t kr = IOConnectCallStructMethod(g_smcConn, 2, &input, inSize, &output, &outSize);
     pthread_mutex_unlock(&g_smcMutex);
     
-    if (kr != kIOReturnSuccess) return -1.0;
+    if (kr != kIOReturnSuccess || output.result != 0) return -1.0;
     
     char typeStr[5] = {
         (char)((dataType >> 24) & 0xFF),
@@ -83,12 +125,26 @@ static double smc_read_key(const char *key) {
         '\0'
     };
     
-    if (strcmp(typeStr, "sp78") == 0 && dataSize >= 2) {
-        int val = ((int8_t)output.bytes[0] << 8) | (unsigned char)output.bytes[1];
-        return (double)val / 256.0;
-    } else if (strcmp(typeStr, "fpe2") == 0 && dataSize >= 2) {
-        int val = ((unsigned char)output.bytes[0] << 8) | (unsigned char)output.bytes[1];
-        return (double)val / 4.0;
+    if (typeStr[0] == 's' && typeStr[1] == 'p' && dataSize >= 2) {
+        int fracBits = -1;
+        char c = typeStr[3];
+        if (c >= '0' && c <= '9') fracBits = c - '0';
+        else if (c >= 'a' && c <= 'f') fracBits = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'F') fracBits = 10 + (c - 'A');
+        if (fracBits >= 0 && fracBits <= 15) {
+            int16_t val = (int16_t)(((unsigned char)output.bytes[0] << 8) | (unsigned char)output.bytes[1]);
+            return (double)val / (double)(1 << fracBits);
+        }
+    } else if (typeStr[0] == 'f' && typeStr[1] == 'p' && dataSize >= 2) {
+        int fracBits = -1;
+        char c = typeStr[3];
+        if (c >= '0' && c <= '9') fracBits = c - '0';
+        else if (c >= 'a' && c <= 'f') fracBits = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'F') fracBits = 10 + (c - 'A');
+        if (fracBits >= 0 && fracBits <= 15) {
+            uint16_t val = ((unsigned char)output.bytes[0] << 8) | (unsigned char)output.bytes[1];
+            return (double)val / (double)(1 << fracBits);
+        }
     } else if (strcmp(typeStr, "flt ") == 0 && dataSize >= 4) {
         float val = 0.0f;
         memcpy(&val, output.bytes, 4);
@@ -96,8 +152,32 @@ static double smc_read_key(const char *key) {
     } else if (strcmp(typeStr, "ui16") == 0 && dataSize >= 2) {
         int val = ((unsigned char)output.bytes[0] << 8) | (unsigned char)output.bytes[1];
         return (double)val;
+    } else if (strcmp(typeStr, "si16") == 0 && dataSize >= 2) {
+        int16_t val = (int16_t)(((unsigned char)output.bytes[0] << 8) | (unsigned char)output.bytes[1]);
+        return (double)val;
     } else if (strcmp(typeStr, "ui8 ") == 0 && dataSize >= 1) {
         return (double)((unsigned char)output.bytes[0]);
+    } else if (strcmp(typeStr, "si8 ") == 0 && dataSize >= 1) {
+        return (double)((int8_t)output.bytes[0]);
+    }
+    return -1.0;
+}
+
+static double smc_read_first_in_range(const char *const keys[], int count, double minVal, double maxVal, int *cachedIdx) {
+    int idx = __atomic_load_n(cachedIdx, __ATOMIC_RELAXED);
+    if (idx >= 0 && idx < count) {
+        double v = smc_read_key(keys[idx]);
+        if (v > minVal && v < maxVal) {
+            return v;
+        }
+    }
+    for (int i = 0; i < count; i++) {
+        if (i == idx) continue;
+        double v = smc_read_key(keys[i]);
+        if (v > minVal && v < maxVal) {
+            __atomic_store_n(cachedIdx, i, __ATOMIC_RELAXED);
+            return v;
+        }
     }
     return -1.0;
 }
@@ -115,17 +195,9 @@ double smc_get_cpu_temp(void) {
 }
 
 double smc_get_gpu_temp(void) {
-    const char *keys[] = {"TCGC", "TG0D", "TG0P", "TG1D", "TG1P", NULL};
-    for (int i = 0; keys[i] != NULL; i++) {
-        double t = smc_read_key(keys[i]);
-        if (t > 10.0 && t < 125.0) {
-            return t;
-        }
-    }
-    // If GPU sensor is missing (integrated GPU often shares die), fallback to CPU proximity
-    double cpuProx = smc_read_key("TC0P");
-    if (cpuProx > 10.0 && cpuProx < 125.0) return cpuProx;
-    return -1.0;
+    // Fallback to TC0P (CPU proximity) when dedicated GPU sensor is absent (integrated GPU)
+    static const char *const keys[] = {"TCGC", "TG0D", "TG0P", "TG1D", "TG1P", "TC0P"};
+    return smc_read_first_in_range(keys, 6, 10.0, 125.0, &g_cachedGpuTempIdx);
 }
 
 double smc_get_fan_rpm(void) {
@@ -177,4 +249,41 @@ int smc_is_kext_loaded(const char *bundle_id) {
     CFRelease(cfBundle);
     CFRelease(loaded);
     return found ? 1 : 0;
+}
+
+double smc_get_cpu_power_watts(void) {
+    static const char *const keys[] = {"PCPC", "PC0R", "PCPG", "PCPR"};
+    return smc_read_first_in_range(keys, 4, 0.0, 300.0, &g_cachedCpuPowerIdx);
+}
+
+double smc_get_system_power_watts(void) {
+    static const char *const keys[] = {"PSTR", "PDTR", "PB0R"};
+    return smc_read_first_in_range(keys, 3, 0.0, 400.0, &g_cachedSysPowerIdx);
+}
+
+int smc_get_battery_charge_limit(void) {
+    double val = smc_read_key("BCLM");
+    if (val >= 1.0 && val <= 100.0) {
+        return (int)val;
+    }
+    return -1;
+}
+
+int smc_is_charge_inhibited(void) {
+    double ch0b = smc_read_key("CH0B");
+    double ch0c = smc_read_key("CH0C");
+    if (ch0b < 0.0 && ch0c < 0.0) {
+        return -1;
+    }
+    if (ch0b > 0.0 || ch0c > 0.0) {
+        return 1;
+    }
+    return 0;
+}
+
+int smc_supports_charge_limit(void) {
+    if (smc_read_key("BCLM") >= 0.0) return 1;
+    if (smc_read_key("CH0B") >= 0.0) return 1;
+    if (smc_read_key("CH0C") >= 0.0) return 1;
+    return 0;
 }

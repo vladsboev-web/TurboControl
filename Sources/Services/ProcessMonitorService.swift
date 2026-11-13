@@ -8,11 +8,24 @@ enum ProcessSortOption: String, CaseIterable {
     case cpu
     case gpu
     case energy
+    case sleep
+}
+
+struct SleepBlockerItem: Identifiable {
+    let id: String
+    let pid: Int32
+    let name: String
+    let executablePath: String
+    let icon: NSImage?
+    let assertionType: String
+    let reason: String
+    let isSystemCritical: Bool
 }
 
 struct HeavyProcessItem: Identifiable {
     let id: Int32 // pid
     let name: String
+    let executablePath: String
     let ruleKey: String
     let icon: NSImage?
     let cpuPercent: Double
@@ -24,9 +37,13 @@ final class ProcessMonitorService: ObservableObject {
     static let shared = ProcessMonitorService()
     
     @Published var processes: [HeavyProcessItem] = []
+    @Published var sleepBlockers: [SleepBlockerItem] = []
     @Published var sortBy: ProcessSortOption = .cpu {
         didSet {
             applySortAndPublish()
+            if sortBy == .energy && !lastFetchUsedTop && isWindowVisible {
+                refreshNow()
+            }
         }
     }
     @Published var isLoading: Bool = false
@@ -36,7 +53,15 @@ final class ProcessMonitorService: ObservableObject {
     private let workerQueue = DispatchQueue(label: "com.turbocontrol.processMonitor", qos: .utility)
     private var isWindowVisible = false
     private var isFetching = false
-    private let usageReader = UsageReader()
+    private var lastFetchUsedTop = false
+    private var previousCpuSamples: [Int32: UInt64] = [:]
+    private var previousSampleTimeNs: UInt64 = 0
+    
+    private static let timebaseInfo: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
     
     private init() {}
     
@@ -55,6 +80,10 @@ final class ProcessMonitorService: ObservableObject {
         isWindowVisible = false
         timer?.invalidate()
         timer = nil
+        workerQueue.async { [weak self] in
+            self?.previousCpuSamples.removeAll()
+            self?.previousSampleTimeNs = 0
+        }
     }
     
     func refreshNow() {
@@ -64,17 +93,24 @@ final class ProcessMonitorService: ObservableObject {
             isLoading = true
         }
         
-        // Take GUI apps snapshot safely on the main thread before dispatching to worker queue
+        // Take GUI apps snapshot, current GPU load and sort mode safely on the main thread before dispatching
         var appByPid: [Int32: NSRunningApplication] = [:]
         for app in NSWorkspace.shared.runningApplications {
             appByPid[app.processIdentifier] = app
         }
+        let totalGPUUsage = SystemMonitor.shared.gpuLoad
+        let useTopForEnergy = (sortBy == .energy)
         
         workerQueue.async { [weak self] in
             guard let self = self else { return }
-            let captured = self.fetchHeavyProcesses(appByPid: appByPid)
+            let captured = useTopForEnergy
+                ? self.fetchHeavyProcessesViaTop(appByPid: appByPid, totalGPUUsage: totalGPUUsage)
+                : self.fetchHeavyProcessesInProcess(appByPid: appByPid, totalGPUUsage: totalGPUUsage)
+            let blockers = self.fetchSleepBlockers(appByPid: appByPid)
             DispatchQueue.main.async {
+                self.lastFetchUsedTop = useTopForEnergy
                 self.allCapturedProcesses = captured
+                self.sleepBlockers = blockers
                 self.isLoading = false
                 self.isFetching = false
                 self.applySortAndPublish()
@@ -96,18 +132,39 @@ final class ProcessMonitorService: ObservableObject {
             }
         case .energy:
             sorted = allCapturedProcesses.sorted { $0.energyImpact > $1.energyImpact }
+        case .sleep:
+            sorted = allCapturedProcesses.sorted { $0.cpuPercent > $1.cpuPercent }
         }
         self.processes = Array(sorted.prefix(5))
     }
     
-    func terminateProcess(_ item: HeavyProcessItem) {
-        if let app = NSRunningApplication(processIdentifier: item.id) {
+    private func safelyTerminate(pid: Int32, expectedPath: String) {
+        if !expectedPath.isEmpty {
+            let currentPath = getExecutablePath(pid: pid)
+            if !currentPath.isEmpty && currentPath != expectedPath {
+                return
+            }
+        }
+        if let app = NSRunningApplication(processIdentifier: pid) {
             if !app.terminate() {
                 app.forceTerminate()
             }
         } else {
-            kill(item.id, SIGTERM)
+            kill(pid, SIGTERM)
         }
+    }
+    
+    func terminateSleepBlocker(_ item: SleepBlockerItem) {
+        guard !item.isSystemCritical else { return }
+        safelyTerminate(pid: item.pid, expectedPath: item.executablePath)
+        sleepBlockers.removeAll { $0.pid == item.pid }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.refreshNow()
+        }
+    }
+    
+    func terminateProcess(_ item: HeavyProcessItem) {
+        safelyTerminate(pid: item.id, expectedPath: item.executablePath)
         
         allCapturedProcesses.removeAll { $0.id == item.id }
         applySortAndPublish()
@@ -117,31 +174,149 @@ final class ProcessMonitorService: ObservableObject {
         }
     }
     
-    private func fetchHeavyProcesses(appByPid: [Int32: NSRunningApplication]) -> [HeavyProcessItem] {
+    private func makeHeavyProcessItem(
+        pid: Int32,
+        rawCommand: String,
+        cpuPercent: Double,
+        energyImpact: Double,
+        appByPid: [Int32: NSRunningApplication],
+        gpuClients: [Int32: Int],
+        totalGPUUsage: Double,
+        totalContexts: Int
+    ) -> HeavyProcessItem? {
+        let app = appByPid[pid]
+        let execPath = getExecutablePath(pid: pid)
+        if isSystemProcess(command: rawCommand, path: execPath, app: app) {
+            return nil
+        }
+        let displayName = app?.localizedName ?? rawCommand
+        let ruleKey = (app?.turboRuleKey).flatMap { $0.isEmpty ? nil : $0 } ?? displayName
+        let icon = app?.icon ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
+        let contexts = gpuClients[pid] ?? 0
+        let estimatedGPU = contexts > 0 ? min(100.0, totalGPUUsage * (Double(contexts) / Double(totalContexts))) : 0.0
+        
+        return HeavyProcessItem(
+            id: pid,
+            name: displayName,
+            executablePath: execPath,
+            ruleKey: ruleKey,
+            icon: icon,
+            cpuPercent: cpuPercent,
+            gpuPercent: estimatedGPU,
+            energyImpact: energyImpact
+        )
+    }
+    
+    private func sampleUserProcessCpuTicks() -> (samples: [Int32: UInt64], names: [Int32: String], timestampNs: UInt64) {
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        let estimatedCount = proc_listallpids(nil, 0)
+        guard estimatedCount > 0 else { return ([:], [:], nowNs) }
+        
+        var pids = [Int32](repeating: 0, count: Int(estimatedCount) + 64)
+        let byteCount = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<Int32>.size))
+        guard byteCount > 0 else { return ([:], [:], nowNs) }
+        
+        let count = Int(byteCount) / MemoryLayout<Int32>.size
+        let currentUID = getuid()
+        let selfPid = ProcessInfo.processInfo.processIdentifier
+        
+        var samples: [Int32: UInt64] = [:]
+        var names: [Int32: String] = [:]
+        samples.reserveCapacity(count / 2)
+        
+        for i in 0..<count {
+            let pid = pids[i]
+            guard pid > 0, pid != selfPid else { continue }
+            
+            var bsdInfo = proc_bsdinfo()
+            let bsdSize = Int32(MemoryLayout<proc_bsdinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsdInfo, bsdSize) == bsdSize,
+                  bsdInfo.pbi_uid == currentUID else {
+                continue
+            }
+            
+            var usage = rusage_info_v2()
+            let rusageRc = withUnsafeMutablePointer(to: &usage) { ptr in
+                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { reboundPtr in
+                    proc_pid_rusage(pid, RUSAGE_INFO_V2, reboundPtr)
+                }
+            }
+            guard rusageRc == 0 else { continue }
+            
+            let name = withUnsafePointer(to: &bsdInfo.pbi_name) { ptr in
+                ptr.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMLEN) * 2) {
+                    String(cString: $0)
+                }
+            }
+            samples[pid] = usage.ri_user_time &+ usage.ri_system_time
+            names[pid] = name
+        }
+        
+        return (samples, names, nowNs)
+    }
+    
+    private func fetchHeavyProcessesInProcess(appByPid: [Int32: NSRunningApplication], totalGPUUsage: Double) -> [HeavyProcessItem] {
+        let gpuClients = fetchGPUClientCounts()
+        let totalContexts = max(1, gpuClients.values.reduce(0, +))
+        
+        if previousSampleTimeNs == 0 || previousCpuSamples.isEmpty {
+            let baseline = sampleUserProcessCpuTicks()
+            previousCpuSamples = baseline.samples
+            previousSampleTimeNs = baseline.timestampNs
+            Thread.sleep(forTimeInterval: 0.35)
+        }
+        
+        let current = sampleUserProcessCpuTicks()
+        let wallNsDelta = current.timestampNs > previousSampleTimeNs ? (current.timestampNs - previousSampleTimeNs) : 1
+        let numer = UInt64(Self.timebaseInfo.numer)
+        let denom = max(1, UInt64(Self.timebaseInfo.denom))
+        
+        var items: [HeavyProcessItem] = []
+        for (pid, totalTicks) in current.samples {
+            let prevTicks = previousCpuSamples[pid] ?? totalTicks
+            let tickDelta = totalTicks >= prevTicks ? (totalTicks - prevTicks) : 0
+            let cpuNsDelta = (tickDelta &* numer) / denom
+            let cpuPercent = (Double(cpuNsDelta) / Double(wallNsDelta)) * 100.0
+            
+            let isRegularApp = appByPid[pid]?.activationPolicy == .regular
+            let hasGpuContexts = (gpuClients[pid] ?? 0) > 0
+            guard cpuPercent >= 0.05 || hasGpuContexts || isRegularApp else { continue }
+            
+            let rawCommand = current.names[pid] ?? ""
+            if let item = makeHeavyProcessItem(
+                pid: pid,
+                rawCommand: rawCommand,
+                cpuPercent: cpuPercent,
+                energyImpact: 0.0,
+                appByPid: appByPid,
+                gpuClients: gpuClients,
+                totalGPUUsage: totalGPUUsage,
+                totalContexts: totalContexts
+            ) {
+                items.append(item)
+            }
+        }
+        
+        previousCpuSamples = current.samples
+        previousSampleTimeNs = current.timestampNs
+        return items
+    }
+    
+    private func fetchHeavyProcessesViaTop(appByPid: [Int32: NSRunningApplication], totalGPUUsage: Double) -> [HeavyProcessItem] {
         let currentUser = NSUserName()
         let selfPid = ProcessInfo.processInfo.processIdentifier
         
         let gpuClients = fetchGPUClientCounts()
-        let totalGPUUsage = usageReader.getGPULoad()
         let totalContexts = max(1, gpuClients.values.reduce(0, +))
         
-        // Run top -l 2 -s 1 for accurate CPU% and Energy (POWER)
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/top")
-        task.arguments = ["-l", "2", "-s", "1", "-n", "40", "-o", "cpu", "-stats", "pid,cpu,power,user,command"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            return []
-        }
-        
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return [] }
+        // Run top -l 2 -s 1 for accurate Energy (POWER)
+        let result = ProcessRunner.run(
+            "/usr/bin/top",
+            arguments: ["-l", "2", "-s", "1", "-n", "40", "-o", "cpu", "-stats", "pid,cpu,power,user,command"],
+            timeout: 8.0
+        )
+        guard result.succeeded else { return [] }
+        let output = result.stdout
         
         // Parse only the 2nd sample (after the second "PID   %CPU")
         let lines = output.components(separatedBy: .newlines)
@@ -170,25 +345,18 @@ final class ProcessMonitorService: ObservableObject {
             
             // Filter out system processes, daemons, and self
             guard user == currentUser, pid != selfPid else { continue }
-            let app = appByPid[pid]
-            let execPath = getExecutablePath(pid: pid)
-            if isSystemProcess(command: rawCommand, path: execPath, app: app) { continue }
-            let displayName = app?.localizedName ?? rawCommand
-            let ruleKey = (app?.turboRuleKey).flatMap { $0.isEmpty ? nil : $0 } ?? displayName
-            
-            let icon = app?.icon ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
-            let contexts = gpuClients[pid] ?? 0
-            let estimatedGPU = contexts > 0 ? min(100.0, totalGPUUsage * (Double(contexts) / Double(totalContexts))) : 0.0
-            
-            items.append(HeavyProcessItem(
-                id: pid,
-                name: displayName,
-                ruleKey: ruleKey,
-                icon: icon,
+            if let item = makeHeavyProcessItem(
+                pid: pid,
+                rawCommand: rawCommand,
                 cpuPercent: cpu,
-                gpuPercent: estimatedGPU,
-                energyImpact: power
-            ))
+                energyImpact: power,
+                appByPid: appByPid,
+                gpuClients: gpuClients,
+                totalGPUUsage: totalGPUUsage,
+                totalContexts: totalContexts
+            ) {
+                items.append(item)
+            }
         }
         
         return items
@@ -278,5 +446,82 @@ final class ProcessMonitorService: ObservableObject {
             accel = IOIteratorNext(iterator)
         }
         return counts
+    }
+    
+    private func fetchSleepBlockers(appByPid: [Int32: NSRunningApplication]) -> [SleepBlockerItem] {
+        let result = ProcessRunner.run("/usr/bin/pmset", arguments: ["-g", "assertions"], timeout: 5.0)
+        guard result.succeeded else { return [] }
+        let output = result.stdout
+        
+        let criticalNames: Set<String> = [
+            "powerd", "kernel_task", "WindowServer", "loginwindow",
+            "launchd", "coreaudiod", "bluetoothd", "UserEventAgent"
+        ]
+        
+        var items: [SleepBlockerItem] = []
+        var seenKeys = Set<String>()
+        
+        for rawLine in output.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("pid "),
+                  let openParen = line.firstIndex(of: "("),
+                  let closeParen = line.firstIndex(of: ")"),
+                  openParen < closeParen else {
+                continue
+            }
+            
+            let pidStart = line.index(line.startIndex, offsetBy: 4)
+            guard let pid = Int32(line[pidStart..<openParen]) else { continue }
+            
+            let rawName = String(line[line.index(after: openParen)..<closeParen])
+            let afterParen = String(line[line.index(after: closeParen)...])
+            
+            // Extract assertion type (e.g. PreventUserIdleSystemSleep, PreventUserIdleDisplaySleep, PreventSystemSleep)
+            var assertionType = "PreventSleep"
+            let knownTypes = [
+                "PreventUserIdleDisplaySleep",
+                "PreventUserIdleSystemSleep",
+                "PreventSystemSleep",
+                "NoDisplaySleepAssertion",
+                "NoIdleSleepAssertion",
+                "BackgroundTask"
+            ]
+            if let matchedType = knownTypes.first(where: { afterParen.contains($0) }) {
+                assertionType = matchedType
+            } else {
+                continue
+            }
+            
+            var reason = ""
+            if let namedRange = afterParen.range(of: "named: \"") {
+                let tail = afterParen[namedRange.upperBound...]
+                if let endQuote = tail.firstIndex(of: "\"") {
+                    reason = String(tail[..<endQuote])
+                }
+            }
+            
+            let key = "\(pid)-\(assertionType)"
+            guard !seenKeys.contains(key) else { continue }
+            seenKeys.insert(key)
+            
+            let app = appByPid[pid]
+            let execPath = getExecutablePath(pid: pid)
+            let displayName = app?.localizedName ?? rawName
+            let icon = app?.icon ?? NSImage(systemSymbolName: "moon.zzz.fill", accessibilityDescription: nil)
+            let isCritical = criticalNames.contains(rawName) || (app == nil && execPath.hasPrefix("/System/"))
+            
+            items.append(SleepBlockerItem(
+                id: key,
+                pid: pid,
+                name: displayName,
+                executablePath: execPath,
+                icon: icon,
+                assertionType: assertionType,
+                reason: reason.isEmpty ? assertionType : reason,
+                isSystemCritical: isCritical
+            ))
+        }
+        
+        return items
     }
 }

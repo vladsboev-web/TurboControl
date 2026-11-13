@@ -72,33 +72,61 @@ struct HeavyProcessesView: View {
                     .fill(Color.primary.opacity(0.06))
             )
             
-            // Top-5 Processes List
-            if monitor.isLoading && monitor.processes.isEmpty {
-                Spacer()
-                ProgressView()
-                    .scaleEffect(0.85)
-                Spacer()
-            } else if monitor.processes.isEmpty {
-                Spacer()
-                Text(L10n.noHeavyProcesses)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Spacer()
-            } else {
-                VStack(spacing: 7) {
-                    ForEach(monitor.processes) { item in
-                        processRow(item)
+            // Processes or Sleep Blockers List
+            if monitor.sortBy == .sleep {
+                if monitor.isLoading && monitor.sleepBlockers.isEmpty {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.85)
+                    Spacer()
+                } else if monitor.sleepBlockers.isEmpty {
+                    Spacer()
+                    Text(L10n.noSleepBlockers)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                } else {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 7) {
+                            ForEach(monitor.sleepBlockers) { item in
+                                sleepBlockerRow(item)
+                            }
+                        }
                     }
                 }
-                Spacer(minLength: 0)
-            }
-            
-            // Footer Hint (Turbo rules on Intel Macs only)
-            if SystemCapabilities.isIntelMac {
-                Text(L10n.heavyProcessesHint)
+                
+                Text(L10n.sleepBlockersHint)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                if monitor.isLoading && monitor.processes.isEmpty {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.85)
+                    Spacer()
+                } else if monitor.processes.isEmpty {
+                    Spacer()
+                    Text(L10n.noHeavyProcesses)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                } else {
+                    VStack(spacing: 7) {
+                        ForEach(monitor.processes) { item in
+                            processRow(item)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                
+                // Footer Hint (Turbo rules on Intel Macs only)
+                if SystemCapabilities.isIntelMac {
+                    Text(L10n.heavyProcessesHint)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -197,11 +225,73 @@ struct HeavyProcessesView: View {
         .glassCard(cornerRadius: 11)
     }
     
+    private func sleepBlockerRow(_ item: SleepBlockerItem) -> some View {
+        HStack(spacing: 10) {
+            if let nsImg = item.icon {
+                Image(nsImage: nsImg)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+            } else {
+                IconBadge(systemName: "moon.zzz.fill", color: .indigo, size: 28, iconSize: 14)
+            }
+            
+            VStack(alignment: .leading, spacing: 2.5) {
+                Text(item.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                
+                Text(item.reason)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            
+            Spacer(minLength: 4)
+            
+            Text(L10n.sleepAssertionBadge(item.assertionType))
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundColor(.indigo)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.indigo.opacity(0.14))
+                )
+            
+            if !item.isSystemCritical {
+                Button(action: {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        monitor.terminateSleepBlocker(item)
+                    }
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(ThermalScale.hotColor)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(ThermalScale.hotColor.opacity(0.14))
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(SpringButtonStyle(pressedScale: 0.90))
+                .help(L10n.killProcessTooltip)
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .glassCard(cornerRadius: 11)
+    }
+    
     private func sortTitle(_ option: ProcessSortOption) -> String {
         switch option {
         case .cpu: return L10n.sortCPU
         case .gpu: return L10n.sortGPU
         case .energy: return L10n.sortEnergy
+        case .sleep: return L10n.sortSleep
         }
     }
     
@@ -213,6 +303,8 @@ struct HeavyProcessesView: View {
             return String(format: "%.1f%% GPU", item.gpuPercent)
         case .energy:
             return String(format: "%.1f Energy", item.energyImpact)
+        case .sleep:
+            return ""
         }
     }
     

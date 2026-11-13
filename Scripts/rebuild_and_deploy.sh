@@ -22,10 +22,11 @@ echo "2. Building app..."
 "$PROJECT_DIR/Scripts/build_app.sh"
 
 echo "3. Copying to /Applications/TurboControl.app and setting up helper..."
-rm -rf "/Applications/TurboControl.app"
-cp -R "$PROJECT_DIR/build/TurboControl.app" "/Applications/TurboControl.app"
 if id -Gn | grep -qw "admin"; then
-    sudo "$PROJECT_DIR/Scripts/setup_helper.sh"
+    sudo "$PROJECT_DIR/Scripts/setup_helper.sh" --install-app
+else
+    rm -rf "/Applications/TurboControl.app"
+    cp -R "$PROJECT_DIR/build/TurboControl.app" "/Applications/TurboControl.app"
 fi
 
 echo "4. Launching new version..."

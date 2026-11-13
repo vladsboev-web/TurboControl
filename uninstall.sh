@@ -31,6 +31,8 @@ rm -f "$TARGET_HOME/Library/LaunchAgents/com.turbocontrol.app.launchagent.plist"
 CLEANUP_CMD='
 if [ -x /Library/PrivilegedHelperTools/turbocontrol-fan ]; then
     /Library/PrivilegedHelperTools/turbocontrol-fan auto >/dev/null 2>&1 || true
+    /Library/PrivilegedHelperTools/turbocontrol-fan charge-inhibit 0 >/dev/null 2>&1 || true
+    /Library/PrivilegedHelperTools/turbocontrol-fan charge-limit 100 >/dev/null 2>&1 || true
 fi
 /sbin/kextunload -b com.rugarciap.DisableTurboBoost 2>/dev/null || /usr/bin/kmutil unload -b com.rugarciap.DisableTurboBoost 2>/dev/null || true
 rm -rf \

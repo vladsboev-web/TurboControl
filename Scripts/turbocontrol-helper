@@ -28,7 +28,8 @@ is_root_owned_kext_dir() {
     [ -n "$target" ] && [ ! -L "$target" ] && [ -d "$target" ] || return 1
     local owner_uid
     owner_uid=$(/usr/bin/stat -f '%u' "$target" 2>/dev/null || echo "")
-    [ "$owner_uid" = "0" ]
+    [ "$owner_uid" = "0" ] || return 1
+    [ -z "$(/usr/bin/find "$target" -mindepth 1 \( -type l -o ! -user 0 -o -perm -002 -o -perm -020 \) -print -quit 2>/dev/null)" ]
 }
 
 is_kext_loaded() {
@@ -159,8 +160,52 @@ case "$CMD" in
             }'
         exit 0
         ;;
+    lowpowermode)
+        if [[ "$ARG2" =~ ^[abc]$ ]] && [[ "$ARG3" =~ ^[01]$ ]]; then
+            /usr/bin/pmset "-$ARG2" lowpowermode "$ARG3"
+            exit $?
+        else
+            echo "INVALID_LOWPOWERMODE_ARGS"
+            exit 1
+        fi
+        ;;
+    cold_sleep)
+        if [[ "$ARG2" =~ ^[01]$ ]] && [[ "$ARG3" =~ ^[01]$ ]]; then
+            /usr/bin/pmset -b powernap "$ARG2" tcpkeepalive "$ARG3"
+            exit $?
+        else
+            echo "INVALID_COLD_SLEEP_ARGS"
+            exit 1
+        fi
+        ;;
+    charge_limit)
+        if ! is_root_owned_safe_file "$FAN_BINARY"; then
+            echo "FAN_BINARY_NOT_FOUND"
+            exit 1
+        fi
+        if [[ "$ARG2" =~ ^[0-9]+$ ]] && [ "$ARG2" -ge 80 ] && [ "$ARG2" -le 100 ]; then
+            "$FAN_BINARY" charge-limit "$ARG2"
+            exit $?
+        else
+            echo "INVALID_CHARGE_LIMIT"
+            exit 1
+        fi
+        ;;
+    charge_inhibit)
+        if ! is_root_owned_safe_file "$FAN_BINARY"; then
+            echo "FAN_BINARY_NOT_FOUND"
+            exit 1
+        fi
+        if [[ "$ARG2" =~ ^[01]$ ]]; then
+            "$FAN_BINARY" charge-inhibit "$ARG2"
+            exit $?
+        else
+            echo "INVALID_CHARGE_INHIBIT"
+            exit 1
+        fi
+        ;;
     *)
-        echo "Usage: $0 {status|disable|enable|fan [auto|manual <rpm>]|cpu_freq}"
+        echo "Usage: $0 {status|disable|enable|fan [auto|manual <rpm>]|cpu_freq|lowpowermode <a|b|c> <0|1>|cold_sleep <0|1> <0|1>|charge_limit <80..100>|charge_inhibit <0|1>}"
         exit 1
         ;;
 esac

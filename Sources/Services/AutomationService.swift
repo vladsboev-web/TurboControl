@@ -76,10 +76,9 @@ final class AutomationService: ObservableObject {
     }
     
     private func setupTemperatureObserver() {
-        NotificationCenter.default.publisher(for: .cpuTempDidUpdateForAutomation)
+        NotificationCenter.default.publisher(for: .metricsDidUpdate)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.refreshPowerState(triggerTransition: false)
                 self?.evaluateRules(reason: .metricsTick)
             }
             .store(in: &cancellables)
@@ -141,39 +140,23 @@ final class AutomationService: ObservableObject {
         
         // 2. Power Transition Rules
         if input.reason == .powerTransition {
-            if input.isPluggedIn {
-                switch input.onACPowerAction {
-                case .enable:
-                    let blockedByLowBattery = input.autoBatteryEnabled
-                        && Double(input.batteryPercentage) <= input.autoBatteryDisableThreshold
-                        && !input.allowTurboOnLowBatteryWhenPluggedIn
-                    let blockedByTemp = input.autoTempEnabled
-                        && input.cpuTemp >= input.autoTempDisableThreshold
-                    if !blockedByLowBattery && !blockedByTemp && input.isTurboDisabled {
-                        return .enableTurbo
-                    }
-                    return .noChange
-                case .disable:
-                    return !input.isTurboDisabled ? .disableTurbo : .noChange
-                case .keep:
-                    break
+            let action = input.isPluggedIn ? input.onACPowerAction : input.onBatteryPowerAction
+            switch action {
+            case .enable:
+                let allowLowBatteryOverride = input.isPluggedIn && input.allowTurboOnLowBatteryWhenPluggedIn
+                let blockedByLowBattery = input.autoBatteryEnabled
+                    && Double(input.batteryPercentage) <= input.autoBatteryDisableThreshold
+                    && !allowLowBatteryOverride
+                let blockedByTemp = input.autoTempEnabled
+                    && input.cpuTemp >= input.autoTempDisableThreshold
+                if !blockedByLowBattery && !blockedByTemp && input.isTurboDisabled {
+                    return .enableTurbo
                 }
-            } else {
-                switch input.onBatteryPowerAction {
-                case .disable:
-                    return !input.isTurboDisabled ? .disableTurbo : .noChange
-                case .enable:
-                    let blockedByLowBattery = input.autoBatteryEnabled
-                        && Double(input.batteryPercentage) <= input.autoBatteryDisableThreshold
-                    let blockedByTemp = input.autoTempEnabled
-                        && input.cpuTemp >= input.autoTempDisableThreshold
-                    if !blockedByLowBattery && !blockedByTemp && input.isTurboDisabled {
-                        return .enableTurbo
-                    }
-                    return .noChange
-                case .keep:
-                    break
-                }
+                return .noChange
+            case .disable:
+                return !input.isTurboDisabled ? .disableTurbo : .noChange
+            case .keep:
+                break
             }
         }
         
@@ -240,8 +223,8 @@ final class AutomationService: ObservableObject {
         
         let previousPlugged = lastPluggedIn
         lastPluggedIn = plugged
-        isPluggedIn = plugged
-        batteryPercentage = pct
+        if isPluggedIn != plugged { isPluggedIn = plugged }
+        if batteryPercentage != pct { batteryPercentage = pct }
         
         if triggerTransition, let prev = previousPlugged, prev != plugged {
             evaluateRules(reason: .powerTransition)
